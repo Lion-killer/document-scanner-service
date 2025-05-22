@@ -65,10 +65,20 @@ document-scanner-service/
 │   │   └── OpenWebUIIntegration.ts # Інтеграція з OpenWebUI
 │   └── utils/
 │       └── Logger.ts             # Утиліта логування
+├── public/
+│   ├── index.html               # Головна сторінка веб-інтерфейсу
+│   ├── styles.css               # Стилі веб-інтерфейсу
+│   └── app.js                   # JavaScript для веб-інтерфейсу
+├── scripts/
+│   ├── LXC_DEPLOYMENT_README.md  # Інструкції з розгортання в LXC
+│   ├── lxc_deployment.sh         # Скрипт розгортання в LXC
+│   ├── lxc_setup.sh             # Скрипт налаштування LXC
+│   ├── lxc_smb_mount.sh         # Скрипт монтування SMB
+│   └── test_remote_connections.sh # Скрипт тестування з'єднань
 ├── .env                        # Файл конфігурації
 ├── package.json
 ├── tsconfig.json
-└── README.md
+└── readme.md
 ```
 
 ### 3. Конфігурація
