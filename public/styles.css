@@ -1,0 +1,194 @@
+/* Загальні стилі */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f7f7f7;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    padding: 30px;
+}
+
+header {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+h1 {
+    color: #2c3e50;
+    font-size: 32px;
+}
+
+h2 {
+    color: #3498db;
+    margin-bottom: 15px;
+    font-size: 22px;
+}
+
+/* Кнопки */
+button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    font-size: 14px;
+}
+
+button:hover {
+    background-color: #2980b9;
+}
+
+button:disabled {
+    background-color: #95a5a6;
+    cursor: not-allowed;
+}
+
+/* Карточка статусу */
+.status-card {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+    border-left: 4px solid #3498db;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+/* Секція пошуку */
+.search-container {
+    display: flex;
+    margin-bottom: 15px;
+}
+
+.search-box {
+    flex: 1;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 5px 0 0 5px;
+    font-size: 16px;
+}
+
+.search-container button {
+    border-radius: 0 5px 5px 0;
+}
+
+.search-section, .documents-section {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+/* Список документів */
+.document-list {
+    margin-top: 20px;
+}
+
+.document-item {
+    background-color: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 5px;
+    padding: 20px;
+    margin-bottom: 15px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.document-item:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+}
+
+.document-item h3 {
+    margin-bottom: 10px;
+    color: #2c3e50;
+}
+
+.document-item p {
+    margin-bottom: 8px;
+    color: #7f8c8d;
+}
+
+.document-item p strong {
+    color: #34495e;
+}
+
+.highlight {
+    background-color: rgba(255, 230, 0, 0.3);
+    padding: 1px 3px;
+    border-radius: 2px;
+}
+
+.filter-container {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.filter-container select {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background-color: white;
+    min-width: 150px;
+}
+
+/* Пагінація */
+.pagination {
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+    gap: 5px;
+}
+
+.pagination button {
+    min-width: 40px;
+    text-align: center;
+}
+
+.pagination button.active {
+    background-color: #2c3e50;
+}
+
+/* Адаптивність */
+@media (max-width: 768px) {
+    .container {
+        padding: 20px 15px;
+    }
+    
+    .button-group, .filter-container {
+        flex-direction: column;
+    }
+    
+    .search-container {
+        flex-direction: column;
+    }
+    
+    .search-box {
+        border-radius: 5px;
+        margin-bottom: 10px;
+    }
+    
+    .search-container button {
+        border-radius: 5px;
+    }
+}

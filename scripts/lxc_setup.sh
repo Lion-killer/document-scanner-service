@@ -1,0 +1,99 @@
+#!/bin/bash
+# lxc_setup.sh - Скрипт для створення та базового налаштування LXC контейнера на Debian
+
+# Функція для логування
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [LXC_SETUP] $1"
+}
+
+# Функція для виводу помилки та виходу
+error_exit() {
+    log "ПОМИЛКА: $1" >&2
+    exit 1
+}
+
+# Перевірка наявності LXC
+if ! command -v lxc-create &> /dev/null; then
+    error_exit "LXC не встановлено. Будь ласка, встановіть LXC та спробуйте знову."
+fi
+
+# Параметри
+CONTAINER_NAME=${1:-doc-scanner-lxc}
+DEBIAN_RELEASE=${2:-bullseye} # або bookworm, buster тощо
+
+log "Початок створення LXC контейнера: $CONTAINER_NAME ($DEBIAN_RELEASE)"
+
+# Перевірка, чи контейнер вже існує
+if sudo lxc-ls | grep -q "^${CONTAINER_NAME}$"; then
+    log "Контейнер $CONTAINER_NAME вже існує."
+    # Запитуємо користувача, чи хоче він його перезаписати
+    read -p "Контейнер $CONTAINER_NAME вже існує. Видалити та створити заново? (y/N): " choice
+    case "$choice" in
+      y|Y ) 
+        log "Видалення існуючого контейнера $CONTAINER_NAME..."
+        sudo lxc-stop -n "$CONTAINER_NAME" --timeout 60 || log "Не вдалося зупинити контейнер (можливо, вже зупинений)."
+        sudo lxc-destroy -n "$CONTAINER_NAME" || error_exit "Не вдалося видалити контейнер $CONTAINER_NAME."
+        log "Існуючий контейнер $CONTAINER_NAME видалено."
+        ;;
+      * ) 
+        log "Створення контейнера скасовано користувачем."
+        exit 0
+        ;;
+    esac
+fi
+
+# Створення контейнера
+log "Створення контейнера $CONTAINER_NAME з образом Debian $DEBIAN_RELEASE..."
+sudo lxc-create -t debian -n "$CONTAINER_NAME" -- -r "$DEBIAN_RELEASE" || error_exit "Не вдалося створити контейнер $CONTAINER_NAME."
+
+log "Контейнер $CONTAINER_NAME успішно створено."
+
+# Запуск контейнера
+log "Запуск контейнера $CONTAINER_NAME..."
+sudo lxc-start -n "$CONTAINER_NAME" -d || error_exit "Не вдалося запустити контейнер $CONTAINER_NAME."
+
+# Очікування запуску контейнера та мережі
+log "Очікування стабілізації мережі в контейнері (до 30 секунд)..."
+MAX_RETRIES=15
+RETRY_COUNT=0
+while ! sudo lxc-attach -n "$CONTAINER_NAME" -- ping -c 1 -W 2 google.com &> /dev/null; do
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
+        log "ПОПЕРЕДЖЕННЯ: Не вдалося перевірити доступ до Інтернету з контейнера $CONTAINER_NAME. Продовжуємо..."
+        break
+    fi
+    sleep 2
+done
+if [ "$RETRY_COUNT" -lt "$MAX_RETRIES" ]; then
+    log "Мережа в контейнері $CONTAINER_NAME активна."
+fi
+
+# Встановлення базових пакетів всередині контейнера
+log "Встановлення базових пакетів (sudo, curl, gnupg, git, apt-transport-https, ca-certificates) в контейнері $CONTAINER_NAME..."
+sudo lxc-attach -n "$CONTAINER_NAME" -- apt-get update -y || log "Помилка при apt-get update в контейнері."
+sudo lxc-attach -n "$CONTAINER_NAME" -- apt-get install -y sudo curl gnupg git apt-transport-https ca-certificates || error_exit "Не вдалося встановити базові пакети в контейнері."
+
+# Створення директорії для скриптів розгортання
+log "Створення директорії /opt/scripts в контейнері..."
+sudo lxc-attach -n "$CONTAINER_NAME" -- mkdir -p /opt/scripts
+
+# Копіювання скриптів розгортання в контейнер
+SCRIPT_DIR=$(dirname "$(realpath "$0")") # Директорія, де знаходиться lxc_setup.sh
+
+for script_name in lxc_deployment.sh test_remote_connections.sh lxc_smb_mount.sh; do
+    if [ -f "$SCRIPT_DIR/$script_name" ]; then
+        log "Копіювання $script_name в контейнер $CONTAINER_NAME:/opt/scripts/"
+        sudo cp "$SCRIPT_DIR/$script_name" "/var/lib/lxc/$CONTAINER_NAME/rootfs/opt/scripts/$script_name"
+        sudo lxc-attach -n "$CONTAINER_NAME" -- chmod +x "/opt/scripts/$script_name"
+    else
+        log "ПОПЕРЕДЖЕННЯ: Скрипт $script_name не знайдено в $SCRIPT_DIR. Пропускаємо копіювання."
+    fi
+done
+
+log "Базове налаштування контейнера $CONTAINER_NAME завершено."
+log "IP-адреса контейнера:"
+sudo lxc-info -n "$CONTAINER_NAME" -iH
+log "Для доступу до консолі контейнера виконайте: sudo lxc-attach -n $CONTAINER_NAME"
+log "Не забудьте скопіювати вихідний код вашого проекту в /opt/document-scanner-service всередині контейнера."
+
+exit 0
