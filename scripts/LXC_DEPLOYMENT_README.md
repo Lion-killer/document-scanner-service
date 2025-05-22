@@ -18,21 +18,29 @@
 
 1.  Створіть LXC-контейнер через веб-інтерфейс Proxmox або за допомогою CLI. Рекомендується використовувати Debian (наприклад, шаблон Debian 12).
 2.  Рекомендується встановити у контейнері базові утиліти (`sudo`, `curl` тощо), хоча скрипт розгортання автоматично встановить Git, Node.js та інші необхідні залежності.
-3.  Завантажте файл скрипту `lxc_deployment.sh` з репозиторію у контейнер. Це можна зробити одним з таких способів:
+3.  Завантажте файли скрипту `lxc_deployment.sh` та `.env` з репозиторію у контейнер. Це можна зробити одним з таких способів:
    
    **Варіант 1:** За допомогою `wget` безпосередньо у контейнері:
    ```bash
+   # Завантаження скрипту розгортання
    wget -O /tmp/lxc_deployment.sh https://raw.githubusercontent.com/Lion-killer/document-scanner-service/master/scripts/lxc_deployment.sh
    chmod +x /tmp/lxc_deployment.sh
+   
+   # Завантаження прикладу .env файлу
+   wget -O /tmp/.env https://raw.githubusercontent.com/Lion-killer/document-scanner-service/master/.env.example
    ```
    
-   **Варіант 2:** Скопіювати файл скрипту з хоста у контейнер:
+   **Варіант 2:** Скопіювати файли з хоста у контейнер:
    ```bash
+   # Копіювання скрипту розгортання
    pct push <VMID> /шлях/до/lxc_deployment.sh /tmp/lxc_deployment.sh
    pct exec <VMID> -- chmod +x /tmp/lxc_deployment.sh
+   
+   # Копіювання .env файлу
+   pct push <VMID> /шлях/до/.env /tmp/.env
    ```
    
-4.  Скрипт автоматично клонуватиме весь проект з GitHub під час розгортання.
+4.  Відредагуйте файл `.env` із потрібними параметрами конфігурації. Скрипт автоматично клонуватиме весь проект з GitHub під час розгортання.
 
 ### Крок 2: Створення LXC-контейнера (якщо не зроблено через Proxmox)
 
@@ -50,40 +58,66 @@ pct exec <VMID> -- /bin/bash
     pct enter <VMID>
     # або через веб-консоль Proxmox
     ```
-2.  Запустіть завантажений скрипт `lxc_deployment.sh`, вказавши параметри підключення до зовнішніх сервісів:
+2.  Переконайтеся, що файл `.env` містить необхідні параметри конфігурації. Відредагуйте його за потреби:
 
-    **Приклад:**
     ```bash
-    sudo /tmp/lxc_deployment.sh \
-        "ip_або_хост_mssql:1433" \
-        "користувач_mssql" \
-        "пароль_mssql" \
-        "DocumentDB" \
-        "http://ip_ollama:11434" \
-        "http://ip_openwebui:8080" \
-        "https://github.com/Lion-killer/document-scanner-service.git" \
-        "master" \
-        "//smb-сервер/шар" \
-        "користувач_smb" \
-        "пароль_смб" \
-        "/mnt/smb_share"
+    # Відредагуйте .env файл із правильними параметрами підключення
+    nano /tmp/.env
     ```
     
-    **Пояснення параметрів:**
-    1. `MSSQL_HOST` - хост та порт MSSQL сервера (наприклад, "192.168.1.100:1433")
-    2. `MSSQL_USER` - користувач MSSQL
-    3. `MSSQL_PASSWORD` - пароль MSSQL
-    4. `MSSQL_DATABASE_NAME` - ім'я бази даних (за замовчуванням "DocumentDB") 
-    5. `OLLAMA_HOST_URL` - URL-адреса Ollama API (наприклад, "http://192.168.1.101:11434")
-    6. `OPENWEBUI_HOST_URL` - URL-адреса OpenWebUI (наприклад, "http://192.168.1.102:8080")
-    7. `GIT_REPO_URL` - URL Git-репозиторію проекту (за замовчуванням "https://github.com/Lion-killer/document-scanner-service.git")
-    8. `GIT_REPO_BRANCH` - Назва гілки Git-репозиторію (за замовчуванням "master")
-    9. `SMB_SERVER_SHARE` - (Опціонально) Шлях до SMB-ресурсу (наприклад, "//192.168.1.200/docs")
-    10. `SMB_USER` - (Опціонально) Користувач SMB
-    11. `SMB_PASSWORD` - (Опціонально) Пароль SMB
-    12. `SMB_MOUNT_POINT` - (Опціонально) Точка монтування SMB (за замовчуванням "/mnt/smb_docs")
+    **Приклад .env файлу:**
+    ```properties
+    # MSSQL
+    DB_SERVER=192.168.1.100:1433
+    DB_NAME=DocumentDB
+    DB_USER=sa
+    DB_PASSWORD=YourPassword123!
+    DB_ENCRYPT=false
+    DB_TRUST_CERT=true
 
-    > **Примітка:** Параметри 7-12 опціональні. Якщо SMB не потрібен, можна вказати лише перші 6 параметрів.
+    # Ollama
+    OLLAMA_URL=http://192.168.1.101:11434
+    EMBEDDING_SERVICE=http://192.168.1.101:11434/api/embeddings
+    EMBEDDING_MODEL=nomic-embed-text
+
+    # LLM
+    LLM_MODEL=llama3.2
+    LLM_TEMPERATURE=0.7
+    LLM_MAX_TOKENS=2000
+
+    # OpenWebUI
+    OPENWEBUI_URL=http://192.168.1.102:8080
+
+    # Server
+    PORT=3000
+    HOST=0.0.0.0
+
+    # SMB - опціонально
+    SMB_SERVER=192.168.1.200
+    SMB_SHARE=docs
+    SMB_USER=smb_user
+    SMB_PASSWORD=smb_password
+    SMB_PATH=/mnt/smb_docs
+    SMB_MOUNT_POINT=/mnt/smb_docs
+
+    # Logging
+    LOG_LEVEL=info
+    LOG_FILE=logs/app.log
+    ```
+    
+3.  Запустіть завантажений скрипт `lxc_deployment.sh`, вказавши шлях до файлу `.env`:
+
+    ```bash
+    sudo /tmp/lxc_deployment.sh /tmp/.env
+    ```
+    
+    Або запустіть скрипт без параметрів, якщо `.env` файл знаходиться в поточній директорії:
+    
+    ```bash
+    sudo /tmp/lxc_deployment.sh
+    ```
+    
+    > **Примітка:** Якщо файл `.env` не вказано, скрипт шукатиме файл `.env` в поточній директорії. Якщо такого файлу немає, скрипт автоматично клонує репозиторій і використає `.env.example` як шаблон.
 
     Скрипт виконає:
     *   Встановлення Git, Node.js, npm та необхідних залежностей.

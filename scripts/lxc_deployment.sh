@@ -2,10 +2,13 @@
 # lxc_deployment.sh - Скрипт для розгортання Сервісу Сканування Документів всередині LXC контейнера
 #
 # Використання:
-# sudo ./lxc_deployment.sh <MSSQL_HOST> <MSSQL_USER> <MSSQL_PASSWORD> <MSSQL_DATABASE> <OLLAMA_HOST_URL> <OPENWEBUI_HOST_URL> [GIT_REPO_URL] [GIT_REPO_BRANCH] [SMB_SERVER_SHARE] [SMB_USER] [SMB_PASSWORD] [SMB_MOUNT_POINT]
+# sudo ./lxc_deployment.sh [шлях_до_env_файлу]
 #
 # Приклад:
-# sudo ./lxc_deployment.sh "192.168.1.100:1433" "sa" "password" "DocumentDB" "http://192.168.1.101:11434" "http://192.168.1.102:8080" "https://github.com/Lion-killer/document-scanner-service.git" "master" "//192.168.1.200/docs" "smb_user" "smb_password" "/mnt/smb_docs"
+# sudo ./lxc_deployment.sh /шлях/до/.env
+#
+# Якщо шлях до .env не вказано, скрипт шукатиме .env в поточній директорії,
+# а якщо не знайде - спробує клонувати репозиторій і використати .env.example з нього
 
 # Функція для логування
 log() {
@@ -23,29 +26,91 @@ if [ "$(id -u)" -ne 0 ]; then
   error_exit "Цей скрипт потрібно запускати з правами root (sudo)."
 fi
 
-# Параметри підключення до віддалених сервісів
-MSSQL_HOST=${1}
-MSSQL_USER=${2}
-MSSQL_PASSWORD=${3}
-MSSQL_DATABASE_NAME=${4:-DocumentDB} # Ім'я бази даних за замовчуванням
-OLLAMA_HOST_URL=${5} # Повний URL, наприклад http://192.168.1.101:11434
-OPENWEBUI_HOST_URL=${6} # Повний URL, наприклад http://192.168.1.102:8080
+# Шлях до додатку
+APP_DIR="/opt/document-scanner-service"
+DEFAULT_ENV_FILE="$APP_DIR/.env"
 
-# Параметри Git-репозиторію (опціонально)
-GIT_REPO_URL=${7:-https://github.com/Lion-killer/document-scanner-service.git}
-GIT_REPO_BRANCH=${8:-master}
+# Функція для завантаження змінних з .env файлу
+load_env_file() {
+    local env_file="$1"
+    log "Завантаження змінних із файлу $env_file"
+    
+    if [ ! -f "$env_file" ]; then
+        error_exit "Файл .env не знайдено: $env_file"
+    fi
+    
+    # Завантажуємо змінні з .env файлу
+    set -a  # автоматично експортувати змінні
+    # Пропускаємо рядки з коментарями та порожні рядки
+    source <(grep -v '^#' "$env_file" | grep -v '^\s*$')
+    set +a
+    
+    log "Змінні успішно завантажено з $env_file"
+}
 
-# Параметри SMB (опціонально)
-SMB_SERVER_SHARE=${9} # Наприклад //192.168.1.200/docs або smb://192.168.1.200/docs
-SMB_SHARE_NAME_ONLY=$(basename "$SMB_SERVER_SHARE" 2>/dev/null) # Наприклад "docs"
-SMB_SERVER_IP_ONLY=$(echo "$SMB_SERVER_SHARE" | sed -E 's#^//##; s#^smb://##; s#/.*$##' 2>/dev/null) # Наприклад "192.168.1.200"
-SMB_USER=${10}
-SMB_PASSWORD=${11}
-SMB_MOUNT_POINT=${12:-/mnt/smb_docs} # Точка монтування за замовчуванням
+# Визначення шляху до .env файлу
+ENV_FILE="${1:-}"
+GIT_REPO_URL="https://github.com/Lion-killer/document-scanner-service.git"
+GIT_REPO_BRANCH="master"
 
-# Перевірка обов'язкових параметрів
-if [ -z "$MSSQL_HOST" ] || [ -z "$MSSQL_USER" ] || [ -z "$MSSQL_PASSWORD" ] || [ -z "$OLLAMA_HOST_URL" ] || [ -z "$OPENWEBUI_HOST_URL" ]; then
-    error_exit "Не вказані всі обов'язкові параметри: MSSQL_HOST, MSSQL_USER, MSSQL_PASSWORD, OLLAMA_HOST_URL, OPENWEBUI_HOST_URL"
+# Якщо .env файл не вказано у параметрах
+if [ -z "$ENV_FILE" ]; then
+    log "Шлях до .env файлу не вказано, шукаємо .env в поточній директорії"
+    if [ -f ".env" ]; then
+        ENV_FILE="./.env"
+        log "Знайдено файл .env в поточній директорії"
+    else
+        log "Файл .env в поточній директорії не знайдено"
+        log "Спроба клонування репозиторію для отримання .env.example"
+        
+        # Перевіряємо, чи встановлений git
+        if ! command -v git &> /dev/null; then
+            log "Git не знайдено. Встановлення Git..."
+            apt-get update -y || error_exit "Не вдалося оновити пакети."
+            apt-get install -y git || error_exit "Не вдалося встановити Git."
+        fi
+        
+        # Створюємо тимчасову директорію для клонування
+        TMP_DIR=$(mktemp -d)
+        log "Клонування репозиторію у тимчасову директорію $TMP_DIR"
+        git clone --depth=1 --branch $GIT_REPO_BRANCH $GIT_REPO_URL $TMP_DIR || error_exit "Не вдалося клонувати репозиторій для отримання .env.example"
+        
+        if [ -f "$TMP_DIR/.env.example" ]; then
+            ENV_FILE="$TMP_DIR/.env.example"
+            log "Використовуємо .env.example з репозиторію як файл конфігурації"
+        else
+            rm -rf $TMP_DIR
+            error_exit "Файл .env.example не знайдено в репозиторії"
+        fi
+    fi
+fi
+
+# Завантажуємо змінні з .env файлу
+load_env_file "$ENV_FILE"
+
+# Перевірка обов'язкових змінних середовища
+if [ -z "$DB_SERVER" ] || [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$OLLAMA_URL" ] || [ -z "$OPENWEBUI_URL" ]; then
+    error_exit "Не вказані всі обов'язкові параметри в .env файлі: DB_SERVER, DB_USER, DB_PASSWORD, OLLAMA_URL, OPENWEBUI_URL"
+fi
+
+# Встановлюємо змінні для подальшого використання
+MSSQL_HOST="$DB_SERVER"
+MSSQL_USER="$DB_USER"
+MSSQL_PASSWORD="$DB_PASSWORD"
+MSSQL_DATABASE_NAME="$DB_NAME"
+OLLAMA_HOST_URL="$OLLAMA_URL"
+OPENWEBUI_HOST_URL="$OPENWEBUI_URL"
+
+# Параметри SMB, якщо вони вказані в .env
+if [ -n "$SMB_SERVER" ] && [ -n "$SMB_SHARE" ]; then
+    # Формуємо повний шлях SMB
+    if [[ "$SMB_SERVER" == "//"* ]]; then
+        SMB_SERVER_SHARE="$SMB_SERVER/$SMB_SHARE"
+    else
+        SMB_SERVER_SHARE="//$SMB_SERVER/$SMB_SHARE"
+    fi
+    SMB_SHARE_NAME_ONLY="$SMB_SHARE"
+    SMB_SERVER_IP_ONLY="$SMB_SERVER"
 fi
 
 log "Початок розгортання Document Scanner Service."
@@ -57,8 +122,6 @@ if [ -n "$SMB_SERVER_SHARE" ]; then
     log "SMB Share: $SMB_SERVER_SHARE, Mount Point: $SMB_MOUNT_POINT, User: $SMB_USER"
 fi
 
-# Шлях до додатку
-APP_DIR="/opt/document-scanner-service"
 CONFIG_FILE="$APP_DIR/.env"
 
 # 1. Оновлення системи та встановлення залежностей
