@@ -1,5 +1,11 @@
 #!/bin/bash
 # lxc_deployment.sh - Скрипт для розгортання Сервісу Сканування Документів всередині LXC контейнера
+#
+# Використання:
+# sudo ./lxc_deployment.sh <MSSQL_HOST> <MSSQL_USER> <MSSQL_PASSWORD> <MSSQL_DATABASE> <OLLAMA_HOST_URL> <OPENWEBUI_HOST_URL> [GIT_REPO_URL] [GIT_REPO_BRANCH] [SMB_SERVER_SHARE] [SMB_USER] [SMB_PASSWORD] [SMB_MOUNT_POINT]
+#
+# Приклад:
+# sudo ./lxc_deployment.sh "192.168.1.100:1433" "sa" "password" "DocumentDB" "http://192.168.1.101:11434" "http://192.168.1.102:8080" "https://github.com/Lion-killer/document-scanner-service.git" "master" "//192.168.1.200/docs" "smb_user" "smb_password" "/mnt/smb_docs"
 
 # Функція для логування
 log() {
@@ -25,13 +31,17 @@ MSSQL_DATABASE_NAME=${4:-DocumentDB} # Ім'я бази даних за замо
 OLLAMA_HOST_URL=${5} # Повний URL, наприклад http://192.168.1.101:11434
 OPENWEBUI_HOST_URL=${6} # Повний URL, наприклад http://192.168.1.102:8080
 
+# Параметри Git-репозиторію (опціонально)
+GIT_REPO_URL=${7:-https://github.com/Lion-killer/document-scanner-service.git}
+GIT_REPO_BRANCH=${8:-master}
+
 # Параметри SMB (опціонально)
-SMB_SERVER_SHARE=${7} # Наприклад //192.168.1.200/docs або smb://192.168.1.200/docs
-SMB_SHARE_NAME_ONLY=$(basename "$SMB_SERVER_SHARE") # Наприклад "docs"
-SMB_SERVER_IP_ONLY=$(echo "$SMB_SERVER_SHARE" | sed -E 's#^//##; s#^smb://##; s#/.*$##') # Наприклад "192.168.1.200"
-SMB_USER=${8}
-SMB_PASSWORD=${9}
-SMB_MOUNT_POINT=${10:-/mnt/smb_docs} # Точка монтування за замовчуванням
+SMB_SERVER_SHARE=${9} # Наприклад //192.168.1.200/docs або smb://192.168.1.200/docs
+SMB_SHARE_NAME_ONLY=$(basename "$SMB_SERVER_SHARE" 2>/dev/null) # Наприклад "docs"
+SMB_SERVER_IP_ONLY=$(echo "$SMB_SERVER_SHARE" | sed -E 's#^//##; s#^smb://##; s#/.*$##' 2>/dev/null) # Наприклад "192.168.1.200"
+SMB_USER=${10}
+SMB_PASSWORD=${11}
+SMB_MOUNT_POINT=${12:-/mnt/smb_docs} # Точка монтування за замовчуванням
 
 # Перевірка обов'язкових параметрів
 if [ -z "$MSSQL_HOST" ] || [ -z "$MSSQL_USER" ] || [ -z "$MSSQL_PASSWORD" ] || [ -z "$OLLAMA_HOST_URL" ] || [ -z "$OPENWEBUI_HOST_URL" ]; then
@@ -42,6 +52,7 @@ log "Початок розгортання Document Scanner Service."
 log "MSSQL Host: $MSSQL_HOST, User: $MSSQL_USER, DB: $MSSQL_DATABASE_NAME"
 log "Ollama URL: $OLLAMA_HOST_URL"
 log "OpenWebUI URL: $OPENWEBUI_HOST_URL"
+log "Репозиторій коду: $GIT_REPO_URL (гілка: $GIT_REPO_BRANCH)"
 if [ -n "$SMB_SERVER_SHARE" ]; then
     log "SMB Share: $SMB_SERVER_SHARE, Mount Point: $SMB_MOUNT_POINT, User: $SMB_USER"
 fi
@@ -54,6 +65,13 @@ CONFIG_FILE="$APP_DIR/.env"
 log "Оновлення пакетів системи..."
 apt-get update -y || error_exit "Не вдалося оновити пакети."
 
+log "Перевірка та встановлення Git..."
+if ! command -v git &> /dev/null; then
+    log "Git не знайдено. Встановлення Git..."
+    apt-get install -y git || error_exit "Не вдалося встановити Git."
+fi
+log "Git version: $(git --version)"
+
 log "Встановлення Node.js (LTS) та npm..."
 # Використання NodeSource для останньої LTS версії Node.js
 curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
@@ -64,12 +82,30 @@ log "npm version: $(npm -v)"
 log "Встановлення build-essential та python3 (для деяких npm пакетів)..."
 apt-get install -y build-essential python3 || error_exit "Не вдалося встановити build-essential та python3."
 
-# 2. Перевірка наявності коду додатку
+# 2. Клонування репозиторію або перевірка наявності коду додатку
+REPO_URL="$GIT_REPO_URL"
+REPO_BRANCH="$GIT_REPO_BRANCH"
+
+log "Перевірка наявності коду додатку або клонування з репозиторію $REPO_URL (гілка $REPO_BRANCH)..."
 if [ ! -d "$APP_DIR" ]; then
-    error_exit "Директорія додатку $APP_DIR не знайдена. Скопіюйте або склонуйте проект перед запуском цього скрипта."
-fi
-if [ ! -f "$APP_DIR/package.json" ]; then
-    error_exit "Файл package.json не знайдено в $APP_DIR."
+    log "Директорія додатку $APP_DIR не існує. Клонування з репозиторію $REPO_URL..."
+    mkdir -p "$(dirname "$APP_DIR")"
+    git clone --branch $REPO_BRANCH $REPO_URL "$APP_DIR" || error_exit "Не вдалося склонувати репозиторій $REPO_URL."
+    log "Репозиторій успішно склоновано в $APP_DIR"
+else
+    log "Директорія $APP_DIR вже існує. Перевірка, чи це Git-репозиторій..."
+    if [ -d "$APP_DIR/.git" ]; then
+        log "Оновлення існуючого Git репозиторію..."
+        cd "$APP_DIR" || error_exit "Не вдалося перейти в директорію $APP_DIR."
+        git fetch origin || log "ПОПЕРЕДЖЕННЯ: Не вдалося оновити репозиторій. Продовжуємо з існуючою версією."
+        git reset --hard "origin/$REPO_BRANCH" || log "ПОПЕРЕДЖЕННЯ: Не вдалося оновити до останньої версії гілки $REPO_BRANCH. Продовжуємо з існуючою версією."
+    else
+        log "Директорія $APP_DIR не є Git-репозиторієм."
+        # Перевірка, чи містить директорія файл package.json
+        if [ ! -f "$APP_DIR/package.json" ]; then
+            error_exit "Директорія $APP_DIR не є Git-репозиторієм і не містить файл package.json. Видаліть директорію для автоматичного клонування або додайте файли вручну."
+        fi
+    fi
 fi
 
 cd "$APP_DIR" || error_exit "Не вдалося перейти в директорію $APP_DIR."
