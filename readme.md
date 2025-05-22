@@ -31,6 +31,19 @@ sudo apt install cifs-utils -y
 # Встановлення утиліт для обробки документів
 sudo apt install antiword libreoffice-writer -y
 
+# Встановлення git
+sudo apt install git -y
+
+# Встановлення Node.js та npm
+curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Встановлення TypeScript
+sudo npm install -g typescript
+
+# Встановлення інших залежностей
+sudo npm install -g ts-node
+
 # Створення точки монтування для SMB
 sudo mkdir -p /mnt/smb_docs
 sudo chown $USER:$USER /mnt/smb_docs
