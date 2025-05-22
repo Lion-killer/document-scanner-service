@@ -42,6 +42,8 @@ sudo chown $USER:$USER /mnt/smb_docs
 
 ```bash
 # Клонуйте репозиторій або створіть нову папку
+git clone https://github.com/Lion-killer/document-scanner-service.git
+# Або створіть нову папку вручну
 mkdir document-scanner-service
 cd document-scanner-service
 
