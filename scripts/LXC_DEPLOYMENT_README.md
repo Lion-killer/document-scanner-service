@@ -133,7 +133,14 @@ pct exec <VMID> -- /bin/bash
 Після розгортання, перебуваючи у контейнері, запустіть скрипт `test_remote_connections.sh` який був автоматично клоновано з GitHub:
 
 ```bash
+# Скрипт автоматично використає /opt/document-scanner-service/.env
 sudo /opt/scripts/test_remote_connections.sh
+```
+
+Або вкажіть шлях до файлу .env:
+
+```bash
+sudo /opt/scripts/test_remote_connections.sh /шлях/до/.env
 ```
 
 Альтернативно, ви можете запустити його з параметрами для перевірки конкретних підключень:
@@ -156,6 +163,16 @@ sudo /opt/scripts/test_remote_connections.sh \
 ### Крок 5: (Опціонально) Керування SMB-шаром
 
 *   Скрипт `lxc_smb_mount.sh` викликається з `lxc_deployment.sh`, якщо вказані параметри SMB.
+*   Скрипт також можна запустити вручну, передавши шлях до .env файлу або параметри напряму:
+
+    ```bash
+    # Використання .env файлу
+    sudo /opt/scripts/lxc_smb_mount.sh /шлях/до/.env
+    
+    # Або з параметрами командного рядка
+    sudo /opt/scripts/lxc_smb_mount.sh "//server/share" "/mnt/smb_point" "username" "password"
+    ```
+
 *   Для ручного демонтування використовуйте стандартні команди Linux, наприклад: `sudo umount /mnt/smb_share`.
 
 ## Керування сервісом (у контейнері)

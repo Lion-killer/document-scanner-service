@@ -17,14 +17,44 @@ if [ "$(id -u)" -ne 0 ]; then
   error_exit "Цей скрипт потрібно запускати з правами root (sudo)."
 fi
 
-# Якщо є .env, підтягуємо SMB_* змінні для монтування
-if [ -f /opt/document-scanner-service/.env ]; then
-    export $(grep -v '^#' /opt/document-scanner-service/.env | xargs)
+# Функція для завантаження змінних з .env файлу
+load_env_file() {
+    local env_file="$1"
+    log "Завантаження змінних із файлу $env_file"
+    
+    if [ ! -f "$env_file" ]; then
+        log "Файл .env не знайдено: $env_file"
+        return 1
+    fi
+    
+    # Завантажуємо змінні з .env файлу
+    set -a  # автоматично експортувати змінні
+    # Пропускаємо рядки з коментарями та порожні рядки
+    source <(grep -v '^#' "$env_file" | grep -v '^\s*$')
+    set +a
+    
+    log "Змінні успішно завантажено з $env_file"
+    return 0
+}
+
+# Спочатку перевіряємо, чи перший параметр - це шлях до файлу .env
+if [ -n "${1:-}" ] && [ -f "$1" ] && [[ "$1" == *.env ]]; then
+    load_env_file "$1"
+    shift  # Зсуваємо параметри, якщо перший був шляхом до .env
+# Шукаємо .env у стандартних місцях
+elif [ -f /opt/document-scanner-service/.env ]; then
+    load_env_file "/opt/document-scanner-service/.env"
+elif [ -f "./env" ]; then
+    load_env_file "./env"
+elif [ -f "$(dirname "$0")/.env" ]; then
+    load_env_file "$(dirname "$0")/.env"
+elif [ -f "$(dirname "$0")/../.env" ]; then
+    load_env_file "$(dirname "$0")/../.env"
 fi
 
 # Параметри
 SMB_SERVER_SHARE=${1:-$SMB_SERVER/$SMB_SHARE} # Повний шлях, наприклад //192.168.1.100/share або smb://server/share
-SMB_MOUNT_POINT=${2}
+SMB_MOUNT_POINT=${2:-$SMB_MOUNT_POINT}
 SMB_USER=${3:-$SMB_USER}
 SMB_PASSWORD=${4:-$SMB_PASSWORD}
 SMB_DOMAIN=${5:-WORKGROUP} # Опціональний параметр домену

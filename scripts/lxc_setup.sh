@@ -17,9 +17,42 @@ if ! command -v lxc-create &> /dev/null; then
     error_exit "LXC не встановлено. Будь ласка, встановіть LXC та спробуйте знову."
 fi
 
+# Функція для завантаження змінних з .env файлу
+load_env_file() {
+    local env_file="$1"
+    log "Завантаження змінних із файлу $env_file"
+    
+    if [ ! -f "$env_file" ]; then
+        log "Файл .env не знайдено: $env_file"
+        return 1
+    fi
+    
+    # Завантажуємо змінні з .env файлу
+    set -a  # автоматично експортувати змінні
+    # Пропускаємо рядки з коментарями та порожні рядки
+    source <(grep -v '^#' "$env_file" | grep -v '^\s*$')
+    set +a
+    
+    log "Змінні успішно завантажено з $env_file"
+    return 0
+}
+
+# Спочатку перевіряємо, чи перший параметр - це шлях до файлу .env
+if [ -n "${1:-}" ] && [ -f "$1" ] && [[ "$1" == *.env ]]; then
+    load_env_file "$1"
+    shift  # Зсуваємо параметри, якщо перший був шляхом до .env
+# Шукаємо .env у стандартних місцях
+elif [ -f "./env" ]; then
+    load_env_file "./env"
+elif [ -f "$(dirname "$0")/.env" ]; then
+    load_env_file "$(dirname "$0")/.env"
+elif [ -f "$(dirname "$0")/../.env" ]; then
+    load_env_file "$(dirname "$0")/../.env"
+fi
+
 # Параметри
-CONTAINER_NAME=${1:-doc-scanner-lxc}
-DEBIAN_RELEASE=${2:-bullseye} # або bookworm, buster тощо
+CONTAINER_NAME=${1:-${LXC_CONTAINER_NAME:-doc-scanner-lxc}}
+DEBIAN_RELEASE=${2:-${LXC_DEBIAN_RELEASE:-bullseye}} # або bookworm, buster тощо
 
 log "Початок створення LXC контейнера: $CONTAINER_NAME ($DEBIAN_RELEASE)"
 

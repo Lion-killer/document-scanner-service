@@ -14,24 +14,77 @@ log_error() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [TEST_CONN] ПОМИЛКА: $1" >&2
 }
 
-# Обробка параметрів
-MSSQL_HOST=${1}
-OLLAMA_HOST=${2} # Очікується тільки хостнейм/IP, порт буде :11434
-OPENWEBUI_HOST=${3} # Очікується тільки хостнейм/IP, порт буде :8080
+# Функція для завантаження змінних з .env файлу
+load_env_file() {
+    local env_file="$1"
+    log "Завантаження змінних із файлу $env_file"
+    
+    if [ ! -f "$env_file" ]; then
+        log_error "Файл .env не знайдено: $env_file"
+        return 1
+    fi
+    
+    # Завантажуємо змінні з .env файлу
+    set -a  # автоматично експортувати змінні
+    # Пропускаємо рядки з коментарями та порожні рядки
+    source <(grep -v '^#' "$env_file" | grep -v '^\s*$')
+    set +a
+    
+    log "Змінні успішно завантажено з $env_file"
+    return 0
+}
 
-MSSQL_USER=${4:-sa}
-MSSQL_PASSWORD=${5:-YourPassword123!} # Пароль за замовчуванням, якщо не передано
-MSSQL_DB_NAME=${6:-DocumentDB} # База даних за замовчуванням
+# Спочатку спробуємо завантажити дані з .env файлу 
+ENV_LOADED=false
 
-# Для тесту підключень використовуємо змінні з .env, якщо файл існує
-if [ -f /opt/document-scanner-service/.env ]; then
-    export $(grep -v '^#' /opt/document-scanner-service/.env | xargs)
+# Перевіряємо можливі шляхи до .env
+ENV_FILE="${1:-}"
+
+# Якщо ENV_FILE вказано і це файл .env
+if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
+    load_env_file "$ENV_FILE" && ENV_LOADED=true
+    shift # зсуваємо параметри, якщо перший був шляхом до .env
+elif [ -f "/opt/document-scanner-service/.env" ]; then
+    load_env_file "/opt/document-scanner-service/.env" && ENV_LOADED=true
+elif [ -f "./env" ]; then
+    load_env_file "./env" && ENV_LOADED=true
+elif [ -f "$(dirname "$0")/.env" ]; then
+    load_env_file "$(dirname "$0")/.env" && ENV_LOADED=true
+elif [ -f "$(dirname "$0")/../.env" ]; then
+    load_env_file "$(dirname "$0")/../.env" && ENV_LOADED=true
+fi
+
+# Якщо змінні не завантажені з .env, використовуємо параметри командного рядка
+if [ "$ENV_LOADED" = false ]; then
+    log "Файл .env не знайдено, використовуємо параметри командного рядка"
+    MSSQL_HOST=${1}
+    OLLAMA_HOST=${2} # Очікується тільки хостнейм/IP, порт буде :11434
+    OPENWEBUI_HOST=${3} # Очікується тільки хостнейм/IP, порт буде :8080
+    MSSQL_USER=${4:-sa}
+    MSSQL_PASSWORD=${5:-YourPassword123!} # Пароль за замовчуванням, якщо не передано
+    MSSQL_DB_NAME=${6:-DocumentDB} # База даних за замовчуванням
+else
+    # Якщо .env завантажено, але параметри командного рядка вказані, вони мають пріоритет
+    [ -n "${1:-}" ] && MSSQL_HOST="$1"
+    [ -n "${2:-}" ] && OLLAMA_HOST="$2"
+    [ -n "${3:-}" ] && OPENWEBUI_HOST="$3"
+    [ -n "${4:-}" ] && MSSQL_USER="$4"
+    [ -n "${5:-}" ] && MSSQL_PASSWORD="$5"
+    [ -n "${6:-}" ] && MSSQL_DB_NAME="$6" 
+    
+    # Мапуємо змінні з .env формату до формату скрипту, якщо вони не встановлені
+    [ -z "${MSSQL_HOST:-}" ] && [ -n "${DB_SERVER:-}" ] && MSSQL_HOST="$DB_SERVER"
+    [ -z "${OLLAMA_HOST:-}" ] && [ -n "${OLLAMA_URL:-}" ] && OLLAMA_HOST="$(echo "$OLLAMA_URL" | sed -E 's/https?:\/\///')"
+    [ -z "${OPENWEBUI_HOST:-}" ] && [ -n "${OPENWEBUI_URL:-}" ] && OPENWEBUI_HOST="$(echo "$OPENWEBUI_URL" | sed -E 's/https?:\/\///')"
+    [ -z "${MSSQL_USER:-}" ] && [ -n "${DB_USER:-}" ] && MSSQL_USER="$DB_USER"
+    [ -z "${MSSQL_PASSWORD:-}" ] && [ -n "${DB_PASSWORD:-}" ] && MSSQL_PASSWORD="$DB_PASSWORD"
+    [ -z "${MSSQL_DB_NAME:-}" ] && [ -n "${DB_NAME:-}" ] && MSSQL_DB_NAME="$DB_NAME"
 fi
 
 # Перевірка обов'язкових параметрів
 if [ -z "$MSSQL_HOST" ] || [ -z "$OLLAMA_HOST" ] || [ -z "$OPENWEBUI_HOST" ]; then
     log_error "Не вказані всі обов'язкові хости: MSSQL_HOST, OLLAMA_HOST, OPENWEBUI_HOST"
-    echo "Використання: $0 <remote_mssql_host> <remote_ollama_host> <remote_openwebui_host> [mssql_user] [mssql_password] [mssql_db]"
+    echo "Використання: $0 [шлях_до_env_файлу] або $0 <remote_mssql_host> <remote_ollama_host> <remote_openwebui_host> [mssql_user] [mssql_password] [mssql_db]"
     exit 1
 fi
 
