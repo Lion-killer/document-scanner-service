@@ -1,12 +1,12 @@
 # Інструкція з розгортання Document Scanner Service у LXC (Proxmox)
 
-Цей посібник пояснює, як розгорнути Document Scanner Service у контейнері LXC на основі Debian у середовищі Proxmox. Передбачається, що **MSSQL Server, Ollama та OpenWebUI вже розгорнуті й доступні як окремі сервіси**.
+Цей посібник пояснює, як розгорнути Document Scanner Service у контейнері LXC на основі Debian у середовищі Proxmox. Передбачається, що **Qdrant, Ollama та OpenWebUI вже розгорнуті й доступні як окремі сервіси**.
 
 ## Необхідні умови
 
 1.  **Proxmox LXC-хост:** Сервер Proxmox із налаштованим LXC (контейнеризація має бути активована).
 2.  **Зовнішні сервіси:**
-    *   **MSSQL Server:** Має бути доступний з контейнера LXC. Потрібні: хост/IP, порт (за замовчуванням 1433), ім'я користувача, пароль і назва бази даних.
+    *   **Qdrant:** Має бути доступний з контейнера LXC. Потрібні: URL-адреса (наприклад, `http://<qdrant-host>:6333`) та API ключ (якщо налаштований).
     *   **Ollama Service:** Має бути доступний з контейнера LXC. Потрібна базова URL-адреса (наприклад, `http://<ollama-host>:11434`). Переконайтеся, що потрібні моделі (`llama3.2`, `nomic-embed-text`) доступні на цьому екземплярі Ollama.
     *   **OpenWebUI Service:** Має бути доступний з контейнера LXC. Потрібна базова URL-адреса (наприклад, `http://<openwebui-host>:8080`).
 3.  **Доступ до інтернету:** Контейнер повинен мати доступ до GitHub для клонування репозиторію проекту `document-scanner-service`.
@@ -17,7 +17,7 @@
 ### Крок 1: Підготовка Proxmox та LXC контейнера
 
 1.  Створіть LXC-контейнер через веб-інтерфейс Proxmox або за допомогою CLI. Рекомендується використовувати Debian (наприклад, шаблон Debian 12).
-2.  Рекомендується встановити у контейнері базові утиліти (`curl` тощо), хоча скрипт розгортання автоматично встановить Git, Node.js, mssql-tools та інші необхідні залежності. Скрипт тепер має покращену підтримку встановлення mssql-tools з кількома резервними методами для різних версій Ubuntu/Debian.
+2.  Рекомендується встановити у контейнері базові утиліти (`curl` тощо), хоча скрипт розгортання автоматично встановить Git, Node.js та інші необхідні залежності.
 3.  Завантажте файли скрипту `lxc_deployment.sh` та `.env` з репозиторію у контейнер. Це можна зробити одним з таких способів:
    
    **Варіант 1:** За допомогою `wget` безпосередньо у контейнері:
@@ -64,17 +64,13 @@ pct exec <VMID> -- /bin/bash
     # Відредагуйте .env файл із правильними параметрами підключення
     nano /tmp/.env
     ```
-    
-    **Приклад .env файлу:**
+      **Приклад .env файлу:**
     ```properties
-    # MSSQL
-    DB_SERVER=192.168.1.100:1433
-    DB_NAME=DocumentDB
-    DB_USER=sa
-    DB_PASSWORD=YourPassword123!
-    DB_ENCRYPT=false
-    DB_TRUST_CERT=true
-
+    # Qdrant
+    DB_URL=http://192.168.1.100:6333
+    DB_API_KEY=your_api_key_if_needed
+    DB_VECTOR_DIM=384
+    
     # Ollama
     OLLAMA_URL=http://192.168.1.101:11434
     EMBEDDING_SERVICE=http://192.168.1.101:11434/api/embeddings
@@ -117,9 +113,7 @@ pct exec <VMID> -- /bin/bash
     /tmp/lxc_deployment.sh
     ```
     
-    > **Примітка:** Якщо файл `.env` не вказано, скрипт шукатиме файл `.env` в поточній директорії. Якщо такого файлу немає, скрипт автоматично клонує репозиторій і використає `.env.example` як шаблон.
-
-    Скрипт виконає:
+    > **Примітка:** Якщо файл `.env` не вказано, скрипт шукатиме файл `.env` в поточній директорії. Якщо такого файлу немає, скрипт автоматично клонує репозиторій і використає `.env.example` як шаблон.    Скрипт виконає:
     *   Встановлення Git, Node.js, npm та необхідних залежностей.
     *   Клонування коду проекту з GitHub у директорію `/opt/document-scanner-service`.
     *   Встановлення залежностей проекту (`npm install`).
@@ -147,16 +141,14 @@ pct exec <VMID> -- /bin/bash
 
 ```bash
 /opt/scripts/test_remote_connections.sh \
-    "ip_або_хост_mssql" \
-    "користувач_mssql" \
-    "пароль_mssql" \
-    "DocumentDB" \
+    "http://qdrant_url:6333" \
+    "api_key_if_needed" \
     "ip_ollama:11434" \
     "ip_openwebui:8080"
 ```
 
 Скрипт перевірить:
-*   Підключення до MSSQL та наявність бази даних.
+*   Підключення до Qdrant та наявність необхідних колекцій.
 *   Доступність Ollama API та наявність потрібних моделей.
 *   Доступність OpenWebUI.
 
@@ -235,13 +227,10 @@ chmod +x /opt/scripts/update_service.sh
 
 **Приклад структури `.env`:**
 ```properties
-# MSSQL
-DB_SERVER=ip_або_хост_mssql
-DB_NAME=DocumentDB
-DB_USER=користувач_mssql
-DB_PASSWORD=пароль_mssql
-DB_ENCRYPT=false
-DB_TRUST_CERT=true
+# Qdrant
+DB_URL=http://ip_або_хост_qdrant:6333
+DB_API_KEY=ваш_api_ключ_якщо_потрібен
+DB_VECTOR_DIM=384
 
 # Ollama
 OLLAMA_URL=http://ip_ollama:11434

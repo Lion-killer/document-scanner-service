@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_remote_connections.sh - Скрипт для тестування з''єднання з віддаленими сервісами
-# Використання: ./test_remote_connections.sh <remote_mssql_host> <remote_ollama_host> <remote_openwebui_host> [mssql_user] [mssql_password] [mssql_db]
+# Використання: ./test_remote_connections.sh <qdrant_url> <remote_ollama_host> <remote_openwebui_host>
 
 set -e # Вихід при першій помилці
 
@@ -57,100 +57,81 @@ fi
 # Якщо змінні не завантажені з .env, використовуємо параметри командного рядка
 if [ "$ENV_LOADED" = false ]; then
     log "Файл .env не знайдено, використовуємо параметри командного рядка"
-    MSSQL_HOST=${1}
+    QDRANT_URL=${1}
     OLLAMA_HOST=${2} # Очікується тільки хостнейм/IP, порт буде :11434
     OPENWEBUI_HOST=${3} # Очікується тільки хостнейм/IP, порт буде :8080
-    MSSQL_USER=${4:-sa}
-    MSSQL_PASSWORD=${5:-YourPassword123!} # Пароль за замовчуванням, якщо не передано
-    MSSQL_DB_NAME=${6:-DocumentDB} # База даних за замовчуванням
 else
     # Якщо .env завантажено, але параметри командного рядка вказані, вони мають пріоритет
-    [ -n "${1:-}" ] && MSSQL_HOST="$1"
+    [ -n "${1:-}" ] && QDRANT_URL="$1"
     [ -n "${2:-}" ] && OLLAMA_HOST="$2"
     [ -n "${3:-}" ] && OPENWEBUI_HOST="$3"
-    [ -n "${4:-}" ] && MSSQL_USER="$4"
-    [ -n "${5:-}" ] && MSSQL_PASSWORD="$5"
-    [ -n "${6:-}" ] && MSSQL_DB_NAME="$6" 
     
     # Мапуємо змінні з .env формату до формату скрипту, якщо вони не встановлені
-    [ -z "${MSSQL_HOST:-}" ] && [ -n "${DB_SERVER:-}" ] && MSSQL_HOST="$DB_SERVER"
+    [ -z "${QDRANT_URL:-}" ] && [ -n "${DB_URL:-}" ] && QDRANT_URL="$DB_URL"
     [ -z "${OLLAMA_HOST:-}" ] && [ -n "${OLLAMA_URL:-}" ] && OLLAMA_HOST="$(echo "$OLLAMA_URL" | sed -E 's/https?:\/\///')"
     [ -z "${OPENWEBUI_HOST:-}" ] && [ -n "${OPENWEBUI_URL:-}" ] && OPENWEBUI_HOST="$(echo "$OPENWEBUI_URL" | sed -E 's/https?:\/\///')"
-    [ -z "${MSSQL_USER:-}" ] && [ -n "${DB_USER:-}" ] && MSSQL_USER="$DB_USER"
-    [ -z "${MSSQL_PASSWORD:-}" ] && [ -n "${DB_PASSWORD:-}" ] && MSSQL_PASSWORD="$DB_PASSWORD"
-    [ -z "${MSSQL_DB_NAME:-}" ] && [ -n "${DB_NAME:-}" ] && MSSQL_DB_NAME="$DB_NAME"
 fi
 
 # Перевірка обов'язкових параметрів
-if [ -z "$MSSQL_HOST" ] || [ -z "$OLLAMA_HOST" ] || [ -z "$OPENWEBUI_HOST" ]; then
-    log_error "Не вказані всі обов'язкові хости: MSSQL_HOST, OLLAMA_HOST, OPENWEBUI_HOST"
-    echo "Використання: $0 [шлях_до_env_файлу] або $0 <remote_mssql_host> <remote_ollama_host> <remote_openwebui_host> [mssql_user] [mssql_password] [mssql_db]"
+if [ -z "$QDRANT_URL" ] || [ -z "$OLLAMA_HOST" ] || [ -z "$OPENWEBUI_HOST" ]; then
+    log_error "Не вказані всі обов'язкові параметри: QDRANT_URL, OLLAMA_HOST, OPENWEBUI_HOST"
+    echo "Використання: $0 [шлях_до_env_файлу] або $0 <qdrant_url> <remote_ollama_host> <remote_openwebui_host>"
     exit 1
 fi
 
 log "Тестування з''єднання з віддаленими сервісами:"
-log "- MSSQL Host: $MSSQL_HOST, User: $MSSQL_USER, DB: $MSSQL_DB_NAME"
+log "- Qdrant URL: $QDRANT_URL"
 log "- Ollama Host: $OLLAMA_HOST (порт 11434)"
 log "- OpenWebUI Host: $OPENWEBUI_HOST (порт 8080)"
 echo "" # Порожній рядок для кращої читабельності
 
 ERRORS_COUNT=0
 
-# Тест MSSQL з'єднання
-test_mssql() {
-    log "Тестування з''єднання з MSSQL ($MSSQL_HOST)..."
+# Тест Qdrant з'єднання
+test_qdrant() {
+    log "Тестування з''єднання з Qdrant ($QDRANT_URL)..."
     
     # Встановлення утиліт для тестування, якщо потрібно
-    if ! command -v sqlcmd &> /dev/null; then
-        log "Встановлення mssql-tools..."
-        # Додавання репозиторію Microsoft (приклад для Debian/Ubuntu)
-        # Перевірте актуальність інструкцій для вашого дистрибутива
-        curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
-        OS_VERSION=$(lsb_release -rs | cut -d. -f1) # 11 для Bullseye, 12 для Bookworm
-        if [[ "$OS_VERSION" == "11" || "$OS_VERSION" == "12" ]]; then
-             curl "https://packages.microsoft.com/config/debian/$OS_VERSION/prod.list" | tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
-        else
-            log_error "Непідтримувана версія Debian/Ubuntu для автоматичного встановлення mssql-tools. Спробуйте встановити вручну."
-            return 1
-        fi
-       
+    if ! command -v curl &> /dev/null; then
+        log "Встановлення curl..."
         apt-get update -y
-        ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev
-        # Додавання до PATH (може потребувати перезапуску сесії або source ~/.bashrc)
-        if ! grep -q '/opt/mssql-tools/bin' ~/.bashrc; then
-            echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> ~/.bashrc
-            log "Додано /opt/mssql-tools/bin до PATH в ~/.bashrc. Перезапустіть термінал або виконайте 'source ~/.bashrc'."
+        apt-get install -y curl
+    fi
+    
+    # Тест з'єднання - перевіримо доступність API
+    QDRANT_API_URL="$(echo $QDRANT_URL | sed 's/\/$//')/collections"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$QDRANT_API_URL")
+    
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        log "✅ З''єднання з Qdrant ($QDRANT_URL) успішне!"
+        
+        # Отримаємо інформацію про версію Qdrant
+        VERSION_INFO=$(curl -s "$QDRANT_URL" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+        if [[ -n "$VERSION_INFO" ]]; then
+            log "   Версія Qdrant: $VERSION_INFO"
+        else
+            log "   Не вдалося отримати інформацію про версію Qdrant"
         fi
-        export PATH="$PATH:/opt/mssql-tools/bin" # Для поточної сесії
-    fi
-    
-    # Тест з'єднання
-    if sqlcmd -S "$MSSQL_HOST" -U "$MSSQL_USER" -P "$MSSQL_PASSWORD" -Q "SELECT @@VERSION" -W -h-1 -b -t 5 > /dev/null 2>&1; then
-        log "✅ З''єднання з MSSQL ($MSSQL_HOST) успішне!"
-        VERSION_INFO=$(sqlcmd -S "$MSSQL_HOST" -U "$MSSQL_USER" -P "$MSSQL_PASSWORD" -Q "SELECT @@VERSION" -W -h-1 -b -t 5 | head -n 1)
-        log "   Версія MSSQL: $VERSION_INFO"
+        
+        # Перевіримо існуючі колекції
+        COLLECTIONS=$(curl -s "$QDRANT_API_URL" | grep -o '"collections":\[.*\]' || echo "Немає колекцій")
+        log "   Існуючі колекції: $COLLECTIONS"
+        
+        # Перевіримо, чи існують необхідні колекції
+        if [[ "$COLLECTIONS" == *"documents"* ]]; then
+            log "   ✅ Колекція 'documents' існує."
+        else
+            log "   ⚠️ Колекція 'documents' не існує. Вона буде створена при першому запуску."
+        fi
+        
+        if [[ "$COLLECTIONS" == *"document_chunks"* ]]; then
+            log "   ✅ Колекція 'document_chunks' існує."
+        else
+            log "   ⚠️ Колекція 'document_chunks' не існує. Вона буде створена при першому запуску."
+        fi
     else
-        log_error "❌ Помилка з''єднання з MSSQL сервером $MSSQL_HOST. Перевірте хост, порт, логін, пароль та налаштування мережі/брандмауера."
+        log_error "❌ Помилка з''єднання з Qdrant сервером $QDRANT_URL. Код відповіді: $HTTP_CODE. Перевірте URL та налаштування мережі/брандмауера."
         return 1
-    fi
-    
-    # Перевірка наявності бази даних
-    # Використовуємо IF EXISTS для уникнення помилки, якщо БД не існує
-    QUERY_CHECK_DB="IF DB_ID('$MSSQL_DB_NAME') IS NOT NULL SELECT 'Exists' ELSE SELECT 'Not Exists'"
-    DB_EXISTS_RESULT=$(sqlcmd -S "$MSSQL_HOST" -U "$MSSQL_USER" -P "$MSSQL_PASSWORD" -Q "$QUERY_CHECK_DB" -W -h-1 -b -t 5)
-
-    if [[ "$DB_EXISTS_RESULT" == "Exists" ]]; then
-        log "✅ База даних '$MSSQL_DB_NAME' існує на сервері $MSSQL_HOST."
-    else
-        log "⚠️ База даних '$MSSQL_DB_NAME' НЕ існує на сервері $MSSQL_HOST."
-        # Можна додати логіку створення, якщо потрібно, але для тесту це може бути зайвим
-        # log "   Спроба створення бази даних '$MSSQL_DB_NAME'..."
-        # if sqlcmd -S "$MSSQL_HOST" -U "$MSSQL_USER" -P "$MSSQL_PASSWORD" -Q "CREATE DATABASE [$MSSQL_DB_NAME]" -W -h-1 -b -t 10 > /dev/null 2>&1; then
-        #     log "   ✅ База даних '$MSSQL_DB_NAME' успішно створена."
-        # else
-        #     log_error "   ❌ Не вдалося створити базу даних '$MSSQL_DB_NAME'."
-        #     return 1
-        # fi
     fi
     
     return 0
@@ -216,30 +197,11 @@ test_openwebui() {
 
 # Головна функція
 main() {
-    # Перевірка наявності mssql-tools
-    if ! command -v sqlcmd &> /dev/null; then
-        log "⚠️ Команда sqlcmd (mssql-tools) не знайдена. Тестування MSSQL буде обмеженим."
-        log "Перевірте, чи встановлений пакет mssql-tools та чи додано /opt/mssql-tools/bin до PATH."
-        if [ -d "/opt/mssql-tools/bin" ]; then
-            export PATH="$PATH:/opt/mssql-tools/bin"
-            log "✅ Шлях /opt/mssql-tools/bin тимчасово додано до PATH для цього скрипта."
-            if command -v sqlcmd &> /dev/null; then
-                log "✅ Команда sqlcmd тепер доступна: $(which sqlcmd)"
-            else
-                log_error "❌ sqlcmd все ще недоступний, незважаючи на оновлення PATH."
-            fi
-        else
-            log_error "❌ Директорія /opt/mssql-tools/bin не існує. Можливо mssql-tools не встановлено."
-        fi
+    # Тестування Qdrant
+    if test_qdrant; then
+        log "✅ Qdrant тести пройдено успішно."
     else
-        log "✅ mssql-tools (sqlcmd) встановлено та доступно: $(which sqlcmd)"
-    fi
-    
-    # Тестування MSSQL
-    if test_mssql; then
-        log "✅ MSSQL тести пройдено успішно."
-    else
-        log_error "❌ MSSQL тести провалено."
+        log_error "❌ Qdrant тести провалено."
         ((ERRORS_COUNT++))
     fi
     echo ""

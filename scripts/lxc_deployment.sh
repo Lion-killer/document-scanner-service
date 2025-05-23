@@ -98,15 +98,12 @@ fi
 load_env_file "$ENV_FILE"
 
 # Перевірка обов'язкових змінних середовища
-if [ -z "$DB_SERVER" ] || [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$OLLAMA_URL" ] || [ -z "$OPENWEBUI_URL" ]; then
-    error_exit "Не вказані всі обов'язкові параметри в .env файлі: DB_SERVER, DB_USER, DB_PASSWORD, OLLAMA_URL, OPENWEBUI_URL"
+if [ -z "$DB_URL" ] || [ -z "$OLLAMA_URL" ] || [ -z "$OPENWEBUI_URL" ]; then
+    error_exit "Не вказані всі обов'язкові параметри в .env файлі: DB_URL, OLLAMA_URL, OPENWEBUI_URL"
 fi
 
 # Встановлюємо змінні для подальшого використання
-MSSQL_HOST="$DB_SERVER"
-MSSQL_USER="$DB_USER"
-MSSQL_PASSWORD="$DB_PASSWORD"
-MSSQL_DATABASE_NAME="$DB_NAME"
+QDRANT_URL="$DB_URL"
 OLLAMA_HOST_URL="$OLLAMA_URL"
 OPENWEBUI_HOST_URL="$OPENWEBUI_URL"
 
@@ -123,7 +120,7 @@ if [ -n "$SMB_SERVER" ] && [ -n "$SMB_SHARE" ]; then
 fi
 
 log "Початок розгортання Document Scanner Service."
-log "MSSQL Host: $MSSQL_HOST, User: $MSSQL_USER, DB: $MSSQL_DATABASE_NAME"
+log "Qdrant URL: $QDRANT_URL"
 log "Ollama URL: $OLLAMA_HOST_URL"
 log "OpenWebUI URL: $OPENWEBUI_HOST_URL"
 log "Репозиторій коду: $GIT_REPO_URL (гілка: $GIT_REPO_BRANCH)"
@@ -135,11 +132,7 @@ CONFIG_FILE="$APP_DIR/.env"
 
 # 1. Оновлення системи та встановлення залежностей
 log "Оновлення пакетів системи..."
-# Видаляємо файл mssql-release.list, якщо він існує від попередньої спроби
-if [ -f "/etc/apt/sources.list.d/mssql-release.list" ]; then
-    log "Знайдено попередній файл репозиторію Microsoft. Видаляємо його для чистого старту..."
-    rm -f /etc/apt/sources.list.d/mssql-release.list
-fi
+# Немає необхідності видаляти файли репозиторію Microsoft, оскільки ми тепер використовуємо Qdrant
 
 apt-get update -y || error_exit "Не вдалося оновити пакети."
 
@@ -168,33 +161,21 @@ log "npm version: $(npm -v)"
 log "Встановлення build-essential та python3 (для деяких npm пакетів)..."
 apt-get install -y build-essential python3 || error_exit "Не вдалося встановити build-essential та python3."
 
-log "Встановлення mssql-tools для взаємодії з MS SQL Server..."
-if command -v sqlcmd &> /dev/null; then
-    log "mssql-tools вже встановлено. Пропускаємо встановлення."
-else
-    # Додаємо ключі Microsoft та налаштовуємо репозиторій
-    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | tee /usr/share/keyrings/mssql.gpg > /dev/null
-    . /etc/os-release
-    DISTRO_ID="$ID$VERSION_ID"
-    case "$DISTRO_ID" in
-        debian11*) REPO_PATH="debian/11";;
-        debian12*) REPO_PATH="debian/12";;
-        ubuntu20.04*) REPO_PATH="ubuntu/20.04";;
-        ubuntu22.04*) REPO_PATH="ubuntu/22.04";;
-        *) REPO_PATH="ubuntu/22.04";;
-    esac
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/mssql.gpg] https://packages.microsoft.com/$REPO_PATH/prod/ main" | tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
-    apt-get update -y || log "ПОПЕРЕДЖЕННЯ: apt-get update не пройшов успішно"
-    ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити mssql-tools"
-    # Додаємо mssql-tools у PATH
-    echo 'export PATH="$PATH:/opt/mssql-tools/bin"' > /etc/profile.d/mssql-tools.sh
-    chmod +x /etc/profile.d/mssql-tools.sh
-    export PATH="$PATH:/opt/mssql-tools/bin"
-    if command -v sqlcmd &> /dev/null; then
-        log "mssql-tools успішно встановлено. sqlcmd доступний."
+log "Перевірка доступу до Qdrant серверу..."
+# Для Qdrant не потрібно встановлювати спеціальні інструменти - 
+# взаємодія відбувається через HTTP API, яке обробляється клієнтською бібліотекою
+if command -v curl &> /dev/null; then
+    # Перевіримо, чи сервер Qdrant відповідає на запити
+    QDRANT_TEST_URL="$(echo $QDRANT_URL | sed 's/\/$//')/collections"
+    if curl -s -o /dev/null -w "%{http_code}" "$QDRANT_TEST_URL" | grep -q "200"; then
+        log "✅ Qdrant сервер доступний за адресою $QDRANT_URL"
     else
-        log "ПОПЕРЕДЖЕННЯ: sqlcmd недоступний після встановлення mssql-tools."
+        log "⚠️ Qdrant сервер недоступний за адресою $QDRANT_URL. Переконайтеся, що сервер запущено та порт відкритий."
+        log "   Додаток спробує підключитися до Qdrant при запуску. Можливо доведеться налаштувати Qdrant окремо."
     fi
+else
+    log "Встановлення curl для перевірки з'єднання з Qdrant..."
+    apt-get install -y curl || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити curl."
 fi
 
 # 2. Клонування репозиторію або перевірка наявності коду додатку

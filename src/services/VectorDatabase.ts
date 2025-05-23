@@ -1,4 +1,4 @@
-import * as sql from 'mssql';
+import { QdrantClient } from '@qdrant/qdrant-js';
 import axios from 'axios';
 import { ConfigManager } from '../config/ConfigManager';
 import { Logger } from '../utils/Logger';
@@ -34,35 +34,32 @@ interface SearchResult {
 export class VectorDatabase {
     private config: ConfigManager;
     private logger: Logger;
-    private pool: sql.ConnectionPool | null = null;
+    private client: QdrantClient | null = null;
     private embeddingService: string;
+    private embeddingDimension: number;
+    private documentsCollectionName: string = 'documents';
+    private chunksCollectionName: string = 'document_chunks';
 
     constructor(config: ConfigManager, logger: Logger) {
         this.config = config;
         this.logger = logger;
         this.embeddingService = config.get('embedding.service', 'http://localhost:11434/api/embeddings');
+        this.embeddingDimension = config.get('embedding.dimension', 384);
     }
 
     public async initialize(): Promise<void> {
         try {
-            // Підключення до MS SQL Server
+            // Підключення до Qdrant
             const dbConfig = this.config.get('database');
-            this.pool = new sql.ConnectionPool({
-                server: dbConfig.server,
-                database: dbConfig.database,
-                user: dbConfig.username,
-                password: dbConfig.password,
-                options: {
-                    encrypt: dbConfig.encrypt || false,
-                    trustServerCertificate: dbConfig.trustServerCertificate || true
-                }
+            this.client = new QdrantClient({
+                url: dbConfig.url || 'http://localhost:6333',
+                apiKey: dbConfig.apiKey,
             });
 
-            await this.pool.connect();
-            this.logger.info('Підключено до бази даних');
+            this.logger.info('Підключено до Qdrant');
 
-            // Створення таблиць якщо їх немає
-            await this.createTables();
+            // Створення колекцій якщо їх немає
+            await this.createCollections();
             
         } catch (error) {
             this.logger.error('Помилка при ініціалізації бази даних:', error);
@@ -70,111 +67,117 @@ export class VectorDatabase {
         }
     }
 
-    private async createTables(): Promise<void> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
-
-        const createDocumentsTable = `
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='documents' AND xtype='U')
-            CREATE TABLE documents (
-                id NVARCHAR(50) PRIMARY KEY,
-                filename NVARCHAR(255) NOT NULL,
-                filepath NVARCHAR(500) NOT NULL,
-                file_size BIGINT NOT NULL,
-                modified_time DATETIME2 NOT NULL,
-                hash_value NVARCHAR(32) NOT NULL,
-                file_type NVARCHAR(10) NOT NULL,
-                content NTEXT,
-                created_at DATETIME2 DEFAULT GETDATE(),
-                updated_at DATETIME2 DEFAULT GETDATE()
-            )
-        `;
-
-        const createChunksTable = `
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='document_chunks' AND xtype='U')
-            CREATE TABLE document_chunks (
-                id NVARCHAR(50) PRIMARY KEY,
-                document_id NVARCHAR(50) NOT NULL,
-                chunk_index INT NOT NULL,
-                content NTEXT NOT NULL,
-                embedding NVARCHAR(MAX), -- JSON array of embeddings
-                created_at DATETIME2 DEFAULT GETDATE(),
-                FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-            )
-        `;
-
-        const createIndexes = `
-            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='idx_documents_hash')
-            CREATE INDEX idx_documents_hash ON documents(hash_value);
-            
-            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='idx_documents_filename')
-            CREATE INDEX idx_documents_filename ON documents(filename);
-            
-            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='idx_chunks_document')
-            CREATE INDEX idx_chunks_document ON document_chunks(document_id);
-        `;
+    private async createCollections(): Promise<void> {
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            await this.pool.request().query(createDocumentsTable);
-            await this.pool.request().query(createChunksTable);
-            await this.pool.request().query(createIndexes);
-            this.logger.info('Таблиці бази даних створено/перевірено');
+            // Перевіряємо чи існує колекція документів
+            const collectionsResponse = await this.client.getCollections();
+            const collections = collectionsResponse.collections.map(col => col.name);
+
+            // Створюємо колекцію документів якщо її немає
+            if (!collections.includes(this.documentsCollectionName)) {
+                this.logger.info(`Створення колекції ${this.documentsCollectionName}`);
+                await this.client.createCollection(this.documentsCollectionName, {
+                    vectors: {
+                        size: this.embeddingDimension,
+                        distance: 'Cosine'
+                    }
+                });
+
+                // Створюємо індекси для колекції документів
+                await this.client.createPayloadIndex(this.documentsCollectionName, {
+                    field_name: 'hash',
+                    field_schema: 'keyword'
+                });
+
+                await this.client.createPayloadIndex(this.documentsCollectionName, {
+                    field_name: 'filename',
+                    field_schema: 'keyword'
+                });
+            }
+
+            // Створюємо колекцію чанків якщо її немає
+            if (!collections.includes(this.chunksCollectionName)) {
+                this.logger.info(`Створення колекції ${this.chunksCollectionName}`);
+                await this.client.createCollection(this.chunksCollectionName, {
+                    vectors: {
+                        size: this.embeddingDimension,
+                        distance: 'Cosine'
+                    }
+                });
+
+                // Створюємо індекси для колекції чанків
+                await this.client.createPayloadIndex(this.chunksCollectionName, {
+                    field_name: 'documentId',
+                    field_schema: 'keyword'
+                });
+
+                await this.client.createPayloadIndex(this.chunksCollectionName, {
+                    field_name: 'chunkIndex',
+                    field_schema: 'integer'
+                });
+            }
+
+            this.logger.info('Колекції бази даних створено/перевірено');
         } catch (error) {
-            this.logger.error('Помилка при створенні таблиць:', error);
+            this.logger.error('Помилка при створенні колекцій:', error);
             throw error;
         }
     }
 
     public async addDocument(document: DocumentInfo, chunks: string[]): Promise<void> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
-
-        const transaction = new sql.Transaction(this.pool);
+        if (!this.client) throw new Error('База даних не ініціалізована');
         
         try {
-            await transaction.begin();
-
+            // Генеруємо ембединг для документа
+            const documentEmbedding = await this.generateEmbedding(document.content || document.filename);
+            
             // Додаємо документ
-            const insertDocQuery = `
-                INSERT INTO documents (id, filename, filepath, file_size, modified_time, hash_value, file_type, content)
-                VALUES (@id, @filename, @filepath, @fileSize, @modifiedTime, @hashValue, @fileType, @content)
-            `;
-
-            const docRequest = new sql.Request(transaction);
-            await docRequest
-                .input('id', sql.NVarChar(50), document.id)
-                .input('filename', sql.NVarChar(255), document.filename)
-                .input('filepath', sql.NVarChar(500), document.filepath)
-                .input('fileSize', sql.BigInt, document.size)
-                .input('modifiedTime', sql.DateTime2, document.modifiedTime)
-                .input('hashValue', sql.NVarChar(32), document.hash)
-                .input('fileType', sql.NVarChar(10), document.type)
-                .input('content', sql.NText, document.content)
-                .query(insertDocQuery);
+            await this.client.upsert(this.documentsCollectionName, {
+                points: [
+                    {
+                        id: document.id,
+                        vector: documentEmbedding,
+                        payload: {
+                            filename: document.filename,
+                            filepath: document.filepath,
+                            fileSize: document.size,
+                            modifiedTime: document.modifiedTime.toISOString(),
+                            hash: document.hash,
+                            fileType: document.type,
+                            content: document.content || '',
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString()
+                        }
+                    }
+                ]
+            });
 
             // Додаємо чанки з ембедингами
             for (let i = 0; i < chunks.length; i++) {
                 const chunkId = `${document.id}_chunk_${i}`;
                 const embedding = await this.generateEmbedding(chunks[i]);
 
-                const insertChunkQuery = `
-                    INSERT INTO document_chunks (id, document_id, chunk_index, content, embedding)
-                    VALUES (@id, @documentId, @chunkIndex, @content, @embedding)
-                `;
-
-                const chunkRequest = new sql.Request(transaction);
-                await chunkRequest
-                    .input('id', sql.NVarChar(50), chunkId)
-                    .input('documentId', sql.NVarChar(50), document.id)
-                    .input('chunkIndex', sql.Int, i)
-                    .input('content', sql.NText, chunks[i])
-                    .input('embedding', sql.NVarChar(sql.MAX), JSON.stringify(embedding))
-                    .query(insertChunkQuery);
+                await this.client.upsert(this.chunksCollectionName, {
+                    points: [
+                        {
+                            id: chunkId,
+                            vector: embedding,
+                            payload: {
+                                documentId: document.id,
+                                chunkIndex: i,
+                                content: chunks[i],
+                                createdAt: new Date().toISOString()
+                            }
+                        }
+                    ]
+                });
             }
 
-            await transaction.commit();
             this.logger.debug(`Документ ${document.filename} додано до бази з ${chunks.length} чанками`);
 
         } catch (error) {
-            await transaction.rollback();
             this.logger.error(`Помилка при додаванні документа ${document.filename}:`, error);
             throw error;
         }
@@ -195,51 +198,46 @@ export class VectorDatabase {
             
             // Fallback - повертаємо випадковий вектор (для тестування)
             this.logger.warn('Використовуємо випадковий ембединг для тестування');
-            return Array.from({ length: 384 }, () => Math.random() - 0.5);
+            return Array.from({ length: this.embeddingDimension }, () => Math.random() - 0.5);
         }
     }
 
     public async searchSimilar(query: string, limit: number = 10): Promise<SearchResult[]> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
             // Генеруємо ембединг для запиту
             const queryEmbedding = await this.generateEmbedding(query);
 
-            // Отримуємо всі чанки (в реальному застосунку слід використовувати векторний індекс)
-            const getAllChunksQuery = `
-                SELECT 
-                    dc.id,
-                    dc.document_id,
-                    dc.chunk_index,
-                    dc.content,
-                    dc.embedding,
-                    d.filename
-                FROM document_chunks dc
-                JOIN documents d ON dc.document_id = d.id
-            `;
-
-            const result = await this.pool.request().query(getAllChunksQuery);
-            
-            // Обчислюємо косинусну подібність
-            const similarities = result.recordset.map(row => {
-                const embedding = JSON.parse(row.embedding);
-                const similarity = this.cosineSimilarity(queryEmbedding, embedding);
-                
-                return {
-                    documentId: row.document_id,
-                    filename: row.filename,
-                    content: row.content,
-                    similarity: similarity,
-                    chunkIndex: row.chunk_index
-                };
+            // Виконуємо векторний пошук
+            const searchResults = await this.client.search(this.chunksCollectionName, {
+                vector: queryEmbedding,
+                limit: limit,
+                with_payload: true
             });
+            
+            // Отримуємо метадані документів для знайдених чанків
+            const documentIds = [...new Set(searchResults.map(r => r.payload?.documentId as string))];
+            const documents = await this.getDocumentsById(documentIds);
+            
+            // Формуємо результати
+            const results: SearchResult[] = [];
+            for (const result of searchResults) {
+                const documentId = result.payload?.documentId as string;
+                const document = documents.find(d => d.id === documentId);
+                
+                if (document) {
+                    results.push({
+                        documentId,
+                        filename: document.filename,
+                        content: result.payload?.content as string,
+                        similarity: result.score || 0,
+                        chunkIndex: result.payload?.chunkIndex as number
+                    });
+                }
+            }
 
-            // Сортуємо за подібністю та повертаємо топ результатів
-            return similarities
-                .sort((a, b) => b.similarity - a.similarity)
-                .slice(0, limit);
-
+            return results;
         } catch (error) {
             this.logger.error('Помилка при пошуку:', error);
             throw error;
@@ -264,27 +262,28 @@ export class VectorDatabase {
     }
 
     public async getDocumentByHash(hash: string): Promise<DocumentInfo | null> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            const query = 'SELECT * FROM documents WHERE hash_value = @hash';
-            const result = await this.pool.request()
-                .input('hash', sql.NVarChar(32), hash)
-                .query(query);
+            const response = await this.client.scroll(this.documentsCollectionName, {
+                filter: {
+                    must: [
+                        {
+                            key: 'hash',
+                            match: {
+                                value: hash
+                            }
+                        }
+                    ]
+                },
+                limit: 1,
+                with_payload: true
+            });
 
-            if (result.recordset.length === 0) return null;
+            if (response.points.length === 0) return null;
 
-            const row = result.recordset[0];
-            return {
-                id: row.id,
-                filename: row.filename,
-                filepath: row.filepath,
-                size: row.file_size,
-                modifiedTime: row.modified_time,
-                hash: row.hash_value,
-                type: row.file_type,
-                content: row.content
-            };
+            const point = response.points[0];
+            return this.mapPointToDocument(point);
         } catch (error) {
             this.logger.error('Помилка при пошуку документа за хешем:', error);
             throw error;
@@ -292,27 +291,28 @@ export class VectorDatabase {
     }
 
     public async getDocumentByName(filename: string): Promise<DocumentInfo | null> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            const query = 'SELECT * FROM documents WHERE filename = @filename';
-            const result = await this.pool.request()
-                .input('filename', sql.NVarChar(255), filename)
-                .query(query);
+            const response = await this.client.scroll(this.documentsCollectionName, {
+                filter: {
+                    must: [
+                        {
+                            key: 'filename',
+                            match: {
+                                value: filename
+                            }
+                        }
+                    ]
+                },
+                limit: 1,
+                with_payload: true
+            });
 
-            if (result.recordset.length === 0) return null;
+            if (response.points.length === 0) return null;
 
-            const row = result.recordset[0];
-            return {
-                id: row.id,
-                filename: row.filename,
-                filepath: row.filepath,
-                size: row.file_size,
-                modifiedTime: row.modified_time,
-                hash: row.hash_value,
-                type: row.file_type,
-                content: row.content
-            };
+            const point = response.points[0];
+            return this.mapPointToDocument(point);
         } catch (error) {
             this.logger.error('Помилка при пошуку документа за іменем:', error);
             throw error;
@@ -320,50 +320,68 @@ export class VectorDatabase {
     }
 
     public async getDocumentById(id: string): Promise<DocumentInfo | null> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            const query = 'SELECT * FROM documents WHERE id = @id';
-            const result = await this.pool.request()
-                .input('id', sql.NVarChar(50), id)
-                .query(query);
+            const response = await this.client.retrieve(this.documentsCollectionName, {
+                ids: [id],
+                with_payload: true
+            });
 
-            if (result.recordset.length === 0) return null;
+            if (response.length === 0) return null;
 
-            const row = result.recordset[0];
-            return {
-                id: row.id,
-                filename: row.filename,
-                filepath: row.filepath,
-                size: row.file_size,
-                modifiedTime: row.modified_time,
-                hash: row.hash_value,
-                type: row.file_type,
-                content: row.content
-            };
+            const point = response[0];
+            return this.mapPointToDocument(point);
         } catch (error) {
             this.logger.error('Помилка при пошуку документа за ID:', error);
             throw error;
         }
     }
 
-    public async getAllDocuments(): Promise<DocumentInfo[]> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+    private async getDocumentsById(ids: string[]): Promise<DocumentInfo[]> {
+        if (!this.client || ids.length === 0) return [];
 
         try {
-            const query = 'SELECT * FROM documents ORDER BY created_at DESC';
-            const result = await this.pool.request().query(query);
+            const response = await this.client.retrieve(this.documentsCollectionName, {
+                ids,
+                with_payload: true
+            });
 
-            return result.recordset.map(row => ({
-                id: row.id,
-                filename: row.filename,
-                filepath: row.filepath,
-                size: row.file_size,
-                modifiedTime: row.modified_time,
-                hash: row.hash_value,
-                type: row.file_type,
-                content: row.content
-            }));
+            return response.map(this.mapPointToDocument);
+        } catch (error) {
+            this.logger.error('Помилка при отриманні документів за ID:', error);
+            return [];
+        }
+    }
+
+    private mapPointToDocument(point: any): DocumentInfo {
+        const payload = point.payload || {};
+        return {
+            id: point.id,
+            filename: payload.filename,
+            filepath: payload.filepath,
+            size: payload.fileSize,
+            modifiedTime: new Date(payload.modifiedTime),
+            hash: payload.hash,
+            type: payload.fileType as any,
+            content: payload.content
+        };
+    }
+
+    public async getAllDocuments(): Promise<DocumentInfo[]> {
+        if (!this.client) throw new Error('База даних не ініціалізована');
+
+        try {
+            const response = await this.client.scroll(this.documentsCollectionName, {
+                limit: 100,  // Збільшимо ліміт для отримання більшої кількості документів
+                with_payload: true,
+                order_by: {
+                    key: 'createdAt',
+                    direction: 'desc'
+                }
+            });
+
+            return response.points.map(this.mapPointToDocument);
         } catch (error) {
             this.logger.error('Помилка при отриманні всіх документів:', error);
             throw error;
@@ -371,14 +389,36 @@ export class VectorDatabase {
     }
 
     public async deleteDocument(documentId: string): Promise<void> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            // Видаляємо документ (чанки видаляться автоматично через CASCADE)
-            const query = 'DELETE FROM documents WHERE id = @id';
-            await this.pool.request()
-                .input('id', sql.NVarChar(50), documentId)
-                .query(query);
+            // Видаляємо документ з колекції документів
+            await this.client.delete(this.documentsCollectionName, {
+                points: [documentId]
+            });
+
+            // Знаходимо та видаляємо всі чанки цього документа
+            const chunksResponse = await this.client.scroll(this.chunksCollectionName, {
+                filter: {
+                    must: [
+                        {
+                            key: 'documentId',
+                            match: {
+                                value: documentId
+                            }
+                        }
+                    ]
+                },
+                limit: 1000,
+                with_payload: false
+            });
+
+            if (chunksResponse.points.length > 0) {
+                const chunkIds = chunksResponse.points.map(p => p.id);
+                await this.client.delete(this.chunksCollectionName, {
+                    points: chunkIds
+                });
+            }
 
             this.logger.info(`Документ ${documentId} видалено`);
         } catch (error) {
@@ -388,11 +428,11 @@ export class VectorDatabase {
     }
 
     public async getDocumentsCount(): Promise<number> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            const result = await this.pool.request().query('SELECT COUNT(*) as count FROM documents');
-            return result.recordset[0].count;
+            const response = await this.client.count(this.documentsCollectionName, {});
+            return response.count;
         } catch (error) {
             this.logger.error('Помилка при підрахунку документів:', error);
             return 0;
@@ -400,11 +440,11 @@ export class VectorDatabase {
     }
 
     public async getVectorsCount(): Promise<number> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            const result = await this.pool.request().query('SELECT COUNT(*) as count FROM document_chunks');
-            return result.recordset[0].count;
+            const response = await this.client.count(this.chunksCollectionName, {});
+            return response.count;
         } catch (error) {
             this.logger.error('Помилка при підрахунку векторів:', error);
             return 0;
@@ -412,24 +452,105 @@ export class VectorDatabase {
     }
 
     public async cleanupOldDocuments(daysOld: number = 30): Promise<void> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            const query = `
-                DELETE FROM documents 
-                WHERE created_at < DATEADD(day, -@daysOld, GETDATE())
-                AND id NOT IN (
-                    SELECT DISTINCT document_id 
-                    FROM document_chunks 
-                    WHERE created_at > DATEADD(day, -7, GETDATE())
-                )
-            `;
+            // Визначення часової межі для старих документів (daysOld днів тому)
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+            const cutoffDateStr = cutoffDate.toISOString();
+            
+            // Знаходимо всі документи, створені раніше за часову межу
+            const oldDocsResponse = await this.client.scroll(this.documentsCollectionName, {
+                filter: {
+                    must: [
+                        {
+                            key: 'createdAt',
+                            range: {
+                                lt: cutoffDateStr
+                            }
+                        }
+                    ]
+                },
+                with_payload: true,
+                limit: 1000
+            });
 
-            const result = await this.pool.request()
-                .input('daysOld', sql.Int, daysOld)
-                .query(query);
+            if (oldDocsResponse.points.length === 0) {
+                this.logger.info('Немає застарілих документів для видалення');
+                return;
+            }
 
-            this.logger.info(`Видалено ${result.rowsAffected?.[0] || 0} застарілих документів`);
+            // Для кожного документа перевіряємо, чи використовувався він нещодавно
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            const sevenDaysAgoStr = sevenDaysAgo.toISOString();
+            
+            const docsToDelete = [];
+            
+            for (const doc of oldDocsResponse.points) {
+                // Перевіряємо, чи є у документа чанки, що використовувались за останній тиждень
+                const recentChunksResponse = await this.client.scroll(this.chunksCollectionName, {
+                    filter: {
+                        must: [
+                            {
+                                key: 'documentId',
+                                match: {
+                                    value: doc.id
+                                }
+                            },
+                            {
+                                key: 'createdAt',
+                                range: {
+                                    gt: sevenDaysAgoStr
+                                }
+                            }
+                        ]
+                    },
+                    limit: 1
+                });
+                
+                // Якщо немає недавніх чанків, додаємо документ до списку на видалення
+                if (recentChunksResponse.points.length === 0) {
+                    docsToDelete.push(doc.id);
+                }
+            }
+            
+            // Видаляємо застарілі документи
+            if (docsToDelete.length > 0) {
+                await this.client.delete(this.documentsCollectionName, {
+                    points: docsToDelete
+                });
+                
+                // Видаляємо відповідні чанки для кожного документа
+                for (const docId of docsToDelete) {
+                    const chunksResponse = await this.client.scroll(this.chunksCollectionName, {
+                        filter: {
+                            must: [
+                                {
+                                    key: 'documentId',
+                                    match: {
+                                        value: docId
+                                    }
+                                }
+                            ]
+                        },
+                        limit: 1000
+                    });
+                    
+                    if (chunksResponse.points.length > 0) {
+                        const chunkIds = chunksResponse.points.map(p => p.id);
+                        await this.client.delete(this.chunksCollectionName, {
+                            points: chunkIds
+                        });
+                    }
+                }
+                
+                this.logger.info(`Видалено ${docsToDelete.length} застарілих документів`);
+            } else {
+                this.logger.info('Немає застарілих документів для видалення');
+            }
+            
         } catch (error) {
             this.logger.error('Помилка при очищенні застарілих документів:', error);
             throw error;
@@ -437,29 +558,43 @@ export class VectorDatabase {
     }
 
     public async getDocumentContext(documentIds: string[]): Promise<string> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            const placeholders = documentIds.map((_, index) => `@id${index}`).join(',');
-            const query = `
-                SELECT d.filename, dc.content, dc.chunk_index
-                FROM documents d
-                JOIN document_chunks dc ON d.id = dc.document_id
-                WHERE d.id IN (${placeholders})
-                ORDER BY d.filename, dc.chunk_index
-            `;
-
-            const request = this.pool.request();
-            documentIds.forEach((id, index) => {
-                request.input(`id${index}`, sql.NVarChar(50), id);
-            });
-
-            const result = await request.query(query);
+            // Отримуємо метадані документів
+            const documents = await this.getDocumentsById(documentIds);
+            if (documents.length === 0) return '';
             
-            return result.recordset
-                .map(row => `[${row.filename}] ${row.content}`)
-                .join('\n\n');
-
+            const result = [];
+            
+            // Для кожного документа отримуємо його чанки
+            for (const doc of documents) {
+                const chunksResponse = await this.client.scroll(this.chunksCollectionName, {
+                    filter: {
+                        must: [
+                            {
+                                key: 'documentId',
+                                match: {
+                                    value: doc.id
+                                }
+                            }
+                        ]
+                    },
+                    order_by: {
+                        key: 'chunkIndex',
+                        direction: 'asc'
+                    },
+                    with_payload: true,
+                    limit: 1000
+                });
+                
+                // Додаємо чанки до результату
+                for (const chunk of chunksResponse.points) {
+                    result.push(`[${doc.filename}] ${chunk.payload?.content}`);
+                }
+            }
+            
+            return result.join('\n\n');
         } catch (error) {
             this.logger.error('Помилка при отриманні контексту документів:', error);
             throw error;
@@ -467,70 +602,56 @@ export class VectorDatabase {
     }
 
     public async close(): Promise<void> {
-        if (this.pool) {
-            await this.pool.close();
-            this.logger.info('Підключення до бази даних закрито');
-        }
+        this.logger.info('Підключення до бази даних закрито');
+        // Qdrant client не потребує явного закриття з'єднання
     }
 
     public async getDocuments({ page = 1, limit = 10, fileType = null }: { page: number; limit: number; fileType: string | null; }): Promise<{ documents: any[]; total: number; }> {
-        if (!this.pool) throw new Error('База даних не ініціалізована');
+        if (!this.client) throw new Error('База даних не ініціалізована');
 
         try {
-            // Базовий запит
-            let countQuery = 'SELECT COUNT(*) as total FROM documents';
-            let query = 'SELECT * FROM documents';
+            const filter: any = {};
             
             // Додаємо умову фільтрації за типом файлу, якщо вказано
-            const params: any = {};
             if (fileType) {
-                countQuery += ' WHERE file_type = @fileType';
-                query += ' WHERE file_type = @fileType';
-                params.fileType = fileType;
+                filter.must = [{
+                    key: 'fileType',
+                    match: {
+                        value: fileType
+                    }
+                }];
             }
             
-            // Додаємо сортування і пагінацію
-            query += ' ORDER BY created_at DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY';
+            // Рахуємо загальну кількість документів
+            let totalCount = 0;
             
-            // Розраховуємо зміщення для пагінації
+            const countResponse = await this.client.count(this.documentsCollectionName, {
+                filter: Object.keys(filter).length > 0 ? filter : undefined
+            });
+            totalCount = countResponse.count;
+            
+            // Отримуємо документи з пагінацією
             const offset = (page - 1) * limit;
-            params.offset = offset;
-            params.limit = limit;
             
-            // Виконуємо запит на кількість документів
-            const countRequest = this.pool.request();
-            if (fileType) {
-                countRequest.input('fileType', sql.NVarChar, fileType);
-            }
-            const totalResult = await countRequest.query(countQuery);
-            const total = totalResult.recordset[0].total;
+            const response = await this.client.scroll(this.documentsCollectionName, {
+                filter: Object.keys(filter).length > 0 ? filter : undefined,
+                limit,
+                offset,
+                with_payload: true,
+                order_by: {
+                    key: 'createdAt',
+                    direction: 'desc'
+                }
+            });
             
-            // Виконуємо основний запит
-            const request = this.pool.request()
-                .input('offset', sql.Int, offset)
-                .input('limit', sql.Int, limit);
-            
-            if (fileType) {
-                request.input('fileType', sql.NVarChar, fileType);
-            }
-            
-            const result = await request.query(query);
-            
-            const documents = result.recordset.map(row => ({
-                id: row.id,
-                filename: row.filename,
-                filepath: row.filepath,
-                file_size: row.file_size,
-                modified_time: row.modified_time,
-                hash_value: row.hash_value,
-                file_type: row.file_type,
-                created_at: row.created_at
-            }));
+            // Перетворюємо дані у потрібний формат
+            const documents = response.points.map(this.mapPointToDocument);
             
             return {
                 documents,
-                total
+                total: totalCount
             };
+            
         } catch (error) {
             this.logger.error('Помилка при отриманні документів з пагінацією:', error);
             throw error;
