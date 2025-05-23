@@ -2,10 +2,10 @@
 # lxc_deployment.sh - Скрипт для розгортання Сервісу Сканування Документів всередині LXC контейнера
 #
 # Використання:
-# sudo ./lxc_deployment.sh [шлях_до_env_файлу]
+# ./lxc_deployment.sh [шлях_до_env_файлу]
 #
 # Приклад:
-# sudo ./lxc_deployment.sh /шлях/до/.env
+# ./lxc_deployment.sh /шлях/до/.env
 #
 # Якщо шлях до .env не вказано, скрипт шукатиме .env в поточній директорії,
 # а якщо не знайде - спробує клонувати репозиторій і використати .env.example з нього
@@ -23,7 +23,7 @@ error_exit() {
 
 # Перевірка запуску від імені root (необхідно для systemctl, apt)
 if [ "$(id -u)" -ne 0 ]; then
-  error_exit "Цей скрипт потрібно запускати з правами root (sudo)."
+  error_exit "Цей скрипт потрібно запускати з правами root."
 fi
 
 # Шлях до додатку
@@ -69,7 +69,7 @@ if [ -z "$ENV_FILE" ]; then
         log "Знайдено файл .env в кореневій директорії проекту: $ENV_FILE"
     else
         log "Файл .env не знайдено в доступних директоріях"
-        log "Необхідно вказати шлях до .env файлу. Використання: sudo ./lxc_deployment.sh /шлях/до/.env"
+        log "Необхідно вказати шлях до .env файлу. Використання: ./lxc_deployment.sh /шлях/до/.env"
         error_exit "Файл .env не знайдено в доступних директоріях. Створіть .env файл або вкажіть шлях до нього."
         
         # Перевіряємо, чи встановлений git
@@ -367,11 +367,11 @@ if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
     log "Сервіс $SERVICE_NAME успішно запущено та активний."
 else
     log "ПОПЕРЕДЖЕННЯ: Сервіс $SERVICE_NAME не активний після запуску. Перевірте логи:"
-    log "sudo journalctl -u $SERVICE_NAME -n 50 --no-pager"
+    log "journalctl -u $SERVICE_NAME -n 50 --no-pager"
 fi
 
 log "Розгортання Document Scanner Service завершено."
 log "Рекомендується запустити /opt/scripts/test_remote_connections.sh для перевірки з'єднань."
-log "Для перегляду логів сервісу: sudo journalctl -u $SERVICE_NAME -f"
+log "Для перегляду логів сервісу: journalctl -u $SERVICE_NAME -f"
 
 exit 0

@@ -23,30 +23,30 @@
 
 ```bash
 # Оновлення системи
-sudo apt update && sudo apt upgrade -y
+apt update && apt upgrade -y
 
 # Встановлення SMB клієнта
-sudo apt install cifs-utils -y
+apt install cifs-utils -y
 
 # Встановлення утиліт для обробки документів
-sudo apt install antiword libreoffice-writer -y
+apt install antiword libreoffice-writer -y
 
 # Встановлення git
-sudo apt install git -y
+apt install git -y
 
 # Встановлення Node.js та npm
-curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
+curl -sL https://deb.nodesource.com/setup_18.x | bash -
+apt install -y nodejs
 
 # Встановлення TypeScript
-sudo npm install -g typescript
+npm install -g typescript
 
 # Встановлення інших залежностей
-sudo npm install -g ts-node
+npm install -g ts-node
 
 # Створення точки монтування для SMB
-sudo mkdir -p /mnt/smb_docs
-sudo chown $USER:$USER /mnt/smb_docs
+mkdir -p /mnt/smb_docs
+chown $USER:$USER /mnt/smb_docs
 ```
 
 ## Налаштування додатку
@@ -153,10 +153,10 @@ WantedBy=multi-user.target
 Активація сервісу:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable document-scanner
-sudo systemctl start document-scanner
-sudo systemctl status document-scanner
+systemctl daemon-reload
+systemctl enable document-scanner
+systemctl start document-scanner
+systemctl status document-scanner
 ```
 
 ## Використання
@@ -198,7 +198,7 @@ grep ERROR logs/app.log
 
 ```bash
 # Ручне монтування для тестування
-sudo mount -t cifs //192.168.1.100/shared /mnt/smb_docs \
+mount -t cifs //192.168.1.100/shared /mnt/smb_docs \
   -o username=your_user,password=your_password,uid=$(id -u),gid=$(id -g)
 
 # Перевірка доступу
@@ -466,7 +466,7 @@ echo "Бекап створено: $BACKUP_DIR"
 cd /path/to/document-scanner-service
 
 # Зупинка сервісу
-sudo systemctl stop document-scanner
+systemctl stop document-scanner
 
 # Бекап поточної версії
 cp -r . ../document-scanner-backup-$(date +%Y%m%d)
@@ -481,7 +481,7 @@ npm install
 npm run build
 
 # Запуск сервісу
-sudo systemctl start document-scanner
+systemctl start document-scanner
 
 echo "Оновлення завершено"
 ```
@@ -490,7 +490,7 @@ echo "Оновлення завершено"
 
 ```bash
 # Налаштування logrotate
-sudo tee /etc/logrotate.d/document-scanner << EOF
+tee /etc/logrotate.d/document-scanner << EOF
 /path/to/document-scanner-service/logs/*.log {
     daily
     missingok
@@ -540,10 +540,10 @@ EOF
    htop
    
    # Налаштування swap
-   sudo fallocate -l 4G /swapfile
-   sudo chmod 600 /swapfile
-   sudo mkswap /swapfile
-   sudo swapon /swapfile
+   fallocate -l 4G /swapfile
+   chmod 600 /swapfile
+   mkswap /swapfile
+   swapon /swapfile
    ```
 
 Додаток готовий до використання! Слідуйте інструкціям покроково для успішного налаштування системи автоматичного сканування документів з інтеграцією векторної бази даних та локальної LLM.

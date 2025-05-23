@@ -104,7 +104,7 @@ export class DocumentScanner {
             // Спроба монтування
             this.logger.info('Монтування SMB папки...');
             
-            const mountCommand = `sudo mount -t cifs ${smbConfig.server}${smbConfig.share} ${mountPoint} -o username=${smbConfig.username},password=${smbConfig.password},uid=$(id -u),gid=$(id -g)`;
+            const mountCommand = `mount -t cifs ${smbConfig.server}${smbConfig.share} ${mountPoint} -o username=${smbConfig.username},password=${smbConfig.password},uid=$(id -u),gid=$(id -g)`;
             
             try {
                 await execAsync(mountCommand);

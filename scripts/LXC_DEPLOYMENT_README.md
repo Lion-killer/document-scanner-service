@@ -108,13 +108,13 @@ pct exec <VMID> -- /bin/bash
 3.  Запустіть завантажений скрипт `lxc_deployment.sh`, вказавши шлях до файлу `.env`:
 
     ```bash
-    sudo /tmp/lxc_deployment.sh /tmp/.env
+    /tmp/lxc_deployment.sh /tmp/.env
     ```
     
     Або запустіть скрипт без параметрів, якщо `.env` файл знаходиться в поточній директорії:
     
     ```bash
-    sudo /tmp/lxc_deployment.sh
+    /tmp/lxc_deployment.sh
     ```
     
     > **Примітка:** Якщо файл `.env` не вказано, скрипт шукатиме файл `.env` в поточній директорії. Якщо такого файлу немає, скрипт автоматично клонує репозиторій і використає `.env.example` як шаблон.
@@ -134,19 +134,19 @@ pct exec <VMID> -- /bin/bash
 
 ```bash
 # Скрипт автоматично використає /opt/document-scanner-service/.env
-sudo /opt/scripts/test_remote_connections.sh
+/opt/scripts/test_remote_connections.sh
 ```
 
 Або вкажіть шлях до файлу .env:
 
 ```bash
-sudo /opt/scripts/test_remote_connections.sh /шлях/до/.env
+/opt/scripts/test_remote_connections.sh /шлях/до/.env
 ```
 
 Альтернативно, ви можете запустити його з параметрами для перевірки конкретних підключень:
 
 ```bash
-sudo /opt/scripts/test_remote_connections.sh \
+/opt/scripts/test_remote_connections.sh \
     "ip_або_хост_mssql" \
     "користувач_mssql" \
     "пароль_mssql" \
@@ -167,23 +167,23 @@ sudo /opt/scripts/test_remote_connections.sh \
 
     ```bash
     # Використання .env файлу
-    sudo /opt/scripts/lxc_smb_mount.sh /шлях/до/.env
+    /opt/scripts/lxc_smb_mount.sh /шлях/до/.env
     
     # Або з параметрами командного рядка
-    sudo /opt/scripts/lxc_smb_mount.sh "//server/share" "/mnt/smb_point" "username" "password"
+    /opt/scripts/lxc_smb_mount.sh "//server/share" "/mnt/smb_point" "username" "password"
     ```
 
-*   Для ручного демонтування використовуйте стандартні команди Linux, наприклад: `sudo umount /mnt/smb_share`.
+*   Для ручного демонтування використовуйте стандартні команди Linux, наприклад: `umount /mnt/smb_share`.
 
 ## Керування сервісом (у контейнері)
 
 Після розгортання керуйте сервісом `document-scanner.service` через systemctl:
 
-*   **Статус:** `sudo systemctl status document-scanner.service`
-*   **Запуск:** `sudo systemctl start document-scanner.service`
-*   **Зупинка:** `sudo systemctl stop document-scanner.service`
-*   **Перезапуск:** `sudo systemctl restart document-scanner.service`
-*   **Логи:** `sudo journalctl -u document-scanner.service -f`
+*   **Статус:** `systemctl status document-scanner.service`
+*   **Запуск:** `systemctl start document-scanner.service`
+*   **Зупинка:** `systemctl stop document-scanner.service`
+*   **Перезапуск:** `systemctl restart document-scanner.service`
+*   **Логи:** `journalctl -u document-scanner.service -f`
 
 ## Оновлення сервісу з GitHub
 
@@ -191,7 +191,7 @@ sudo /opt/scripts/test_remote_connections.sh \
 
 ```bash
 # Зупинити сервіс
-sudo systemctl stop document-scanner.service
+systemctl stop document-scanner.service
 
 # Перейти в директорію проекту
 cd /opt/document-scanner-service
@@ -207,7 +207,7 @@ npm install --omit=dev
 npm run build
 
 # Запустити сервіс
-sudo systemctl start document-scanner.service
+systemctl start document-scanner.service
 ```
 
 Цей процес можна автоматизувати за допомогою скрипта. Наприклад, ви можете створити файл `/opt/scripts/update_service.sh`:
@@ -215,12 +215,12 @@ sudo systemctl start document-scanner.service
 ```bash
 #!/bin/bash
 cd /opt/document-scanner-service && \
-sudo systemctl stop document-scanner.service && \
+systemctl stop document-scanner.service && \
 git fetch origin && \
 git reset --hard origin/master && \
 npm install --omit=dev && \
 npm run build && \
-sudo systemctl start document-scanner.service && \
+systemctl start document-scanner.service && \
 echo "Сервіс успішно оновлено до останньої версії!"
 ```
 

@@ -105,17 +105,17 @@ test_mssql() {
         log "Встановлення mssql-tools..."
         # Додавання репозиторію Microsoft (приклад для Debian/Ubuntu)
         # Перевірте актуальність інструкцій для вашого дистрибутива
-        curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+        curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
         OS_VERSION=$(lsb_release -rs | cut -d. -f1) # 11 для Bullseye, 12 для Bookworm
         if [[ "$OS_VERSION" == "11" || "$OS_VERSION" == "12" ]]; then
-             curl "https://packages.microsoft.com/config/debian/$OS_VERSION/prod.list" | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+             curl "https://packages.microsoft.com/config/debian/$OS_VERSION/prod.list" | tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
         else
             log_error "Непідтримувана версія Debian/Ubuntu для автоматичного встановлення mssql-tools. Спробуйте встановити вручну."
             return 1
         fi
        
-        sudo apt-get update -y
-        sudo ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev
+        apt-get update -y
+        ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev
         # Додавання до PATH (може потребувати перезапуску сесії або source ~/.bashrc)
         if ! grep -q '/opt/mssql-tools/bin' ~/.bashrc; then
             echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> ~/.bashrc
