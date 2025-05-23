@@ -135,6 +135,12 @@ CONFIG_FILE="$APP_DIR/.env"
 
 # 1. Оновлення системи та встановлення залежностей
 log "Оновлення пакетів системи..."
+# Видаляємо файл mssql-release.list, якщо він існує від попередньої спроби
+if [ -f "/etc/apt/sources.list.d/mssql-release.list" ]; then
+    log "Знайдено попередній файл репозиторію Microsoft. Видаляємо його для чистого старту..."
+    rm -f /etc/apt/sources.list.d/mssql-release.list
+fi
+
 apt-get update -y || error_exit "Не вдалося оновити пакети."
 
 log "Перевірка та встановлення Git..."
@@ -177,19 +183,65 @@ else
     if command -v gpg &> /dev/null; then
         log "Використовуємо gpg для додавання ключа репозиторію"
         curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-keyring.gpg
-        # Визначення версії Ubuntu
-        UBUNTU_VERSION=$(lsb_release -rs)
-        log "Версія Ubuntu: $UBUNTU_VERSION"
-        # Чітко задаємо шлях репозиторію без додаткових слешів
-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-keyring.gpg] https://packages.microsoft.com/ubuntu/$UBUNTU_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+        
+        # Визначення дистрибутиву
+        OS_NAME=$(cat /etc/os-release | grep -oP '(?<=^ID=).+' | tr -d '"')
+        OS_VERSION=$(lsb_release -rs)
+        log "Виявлена операційна система: $OS_NAME $OS_VERSION"
+        
+        # Вибір правильного репозиторію залежно від дистрибутиву
+        if [ "$OS_NAME" = "debian" ]; then
+            log "Використовуємо репозиторій Microsoft для Debian"
+            # Визначаємо відповідну версію Debian для репозиторію Microsoft
+            case $OS_VERSION in
+                11*)
+                    REPO_VERSION="bullseye"
+                    ;;
+                12*)
+                    REPO_VERSION="bookworm"
+                    ;;
+                *)
+                    REPO_VERSION="bullseye" # За замовчуванням для інших версій
+                    ;;
+            esac
+            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-keyring.gpg] https://packages.microsoft.com/debian/$REPO_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+        else
+            # Для Ubuntu та інших дистрибутивів
+            log "Використовуємо репозиторій Microsoft для Ubuntu/інших дистрибутивів"
+            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-keyring.gpg] https://packages.microsoft.com/ubuntu/$OS_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+        fi
     else
         # Якщо gpg не встановлено, використовуємо застарілий метод з apt-key
         log "gpg не знайдено, використовуємо альтернативний метод з apt-key"
         apt-get install -y gnupg || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити gnupg. Продовжуємо..."
-        curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
-        UBUNTU_VERSION=$(lsb_release -rs)
-        log "Версія Ubuntu: $UBUNTU_VERSION"
-        echo "deb https://packages.microsoft.com/ubuntu/$UBUNTU_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+        curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+        
+        # Визначення дистрибутиву
+        OS_NAME=$(cat /etc/os-release | grep -oP '(?<=^ID=).+' | tr -d '"')
+        OS_VERSION=$(lsb_release -rs)
+        log "Виявлена операційна система: $OS_NAME $OS_VERSION"
+        
+        # Вибір правильного репозиторію залежно від дистрибутиву
+        if [ "$OS_NAME" = "debian" ]; then
+            log "Використовуємо репозиторій Microsoft для Debian"
+            # Визначаємо відповідну версію Debian для репозиторію Microsoft
+            case $OS_VERSION in
+                11*)
+                    REPO_VERSION="bullseye"
+                    ;;
+                12*)
+                    REPO_VERSION="bookworm"
+                    ;;
+                *)
+                    REPO_VERSION="bullseye" # За замовчуванням для інших версій
+                    ;;
+            esac
+            echo "deb https://packages.microsoft.com/debian/$REPO_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+        else
+            # Для Ubuntu та інших дистрибутивів
+            log "Використовуємо репозиторій Microsoft для Ubuntu/інших дистрибутивів"
+            echo "deb https://packages.microsoft.com/ubuntu/$OS_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+        fi
     fi
     apt-get update -y || log "ПОПЕРЕДЖЕННЯ: Виникла помилка при оновленні пакетів. Продовжуємо..."
     # Додаткова перевірка файлу репозиторію
