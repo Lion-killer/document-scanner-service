@@ -34,9 +34,12 @@ apt install antiword libreoffice-writer -y
 # Встановлення git
 apt install git -y
 
-# Встановлення Node.js та npm
+# Встановлення Node.js
 curl -sL https://deb.nodesource.com/setup_18.x | bash -
 apt install -y nodejs
+
+# Встановлення npm
+apt install -y npm
 
 # Встановлення TypeScript
 npm install -g typescript
