@@ -144,6 +144,14 @@ if ! command -v git &> /dev/null; then
 fi
 log "Git version: $(git --version)"
 
+log "Встановлення необхідних пакетів для роботи з CIFS/SMB..."
+apt-get install -y cifs-utils || error_exit "Не вдалося встановити cifs-utils."
+apt-get install -y jq || error_exit "Не вдалося встановити jq."
+
+log "Встановлення залежностей для обробки документів (antiword, libreoffice)..."
+apt-get install -y antiword || error_exit "Не вдалося встановити antiword."
+apt-get install -y libreoffice-writer --no-install-recommends || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити libreoffice-writer. Функція читання .doc файлів може працювати з обмеженнями."
+
 log "Встановлення Node.js (LTS) та npm..."
 # Використання NodeSource для останньої LTS версії Node.js
 curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
@@ -153,6 +161,26 @@ log "npm version: $(npm -v)"
 
 log "Встановлення build-essential та python3 (для деяких npm пакетів)..."
 apt-get install -y build-essential python3 || error_exit "Не вдалося встановити build-essential та python3."
+
+log "Встановлення mssql-tools для взаємодії з MS SQL Server..."
+# Додавання репозиторію Microsoft (сучасний метод)
+curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-keyring.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-keyring.gpg] https://packages.microsoft.com/ubuntu/$(lsb_release -rs)/prod focal main" > /etc/apt/sources.list.d/mssql-release.list
+apt-get update -y
+# Встановлення пакетів з прийняттям ліцензії
+ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev || error_exit "Не вдалося встановити mssql-tools."
+
+# Додаємо шлях до PATH як для поточної сесії, так і для майбутніх сесій
+echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> /etc/profile.d/mssql-tools.sh
+chmod +x /etc/profile.d/mssql-tools.sh
+export PATH="$PATH:/opt/mssql-tools/bin"
+
+# Перевірка встановлення
+if command -v sqlcmd &> /dev/null; then
+    log "mssql-tools успішно встановлено. sqlcmd доступний."
+else
+    error_exit "mssql-tools встановлено, але команда sqlcmd недоступна. Перевірте шлях: /opt/mssql-tools/bin"
+fi
 
 # 2. Клонування репозиторію або перевірка наявності коду додатку
 REPO_URL="$GIT_REPO_URL"
@@ -225,6 +253,14 @@ HOST=0.0.0.0
 LOG_LEVEL=info
 LOG_FILE=logs/app.log
 EOL
+
+# Встановлюємо правильні права на конфігураційний файл
+chmod 600 "$APP_DIR/.env"
+log "Встановлено безпечні права на .env файл"
+
+# Створюємо директорію для логів
+mkdir -p "$APP_DIR/logs"
+chmod 755 "$APP_DIR/logs"
 
 # SMB конфігурація, якщо параметри надані
 if [ -n "$SMB_SERVER_SHARE" ]; then
@@ -309,8 +345,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=nobody # Або інший непривілейований користувач
-Group=nogroup # Або інша група
+# Або інший непривілейований користувач
+User=nobody
+# Або інша група
+Group=nogroup
 WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/node $START_SCRIPT
 # Якщо використовується ts-node:
@@ -324,6 +362,7 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 Environment=NODE_ENV=production
+EnvironmentFile=${APP_DIR}/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -370,8 +409,15 @@ else
     log "journalctl -u $SERVICE_NAME -n 50 --no-pager"
 fi
 
+# Копіюємо скрипти в стандартну директорію для скриптів
+SCRIPTS_DIR="/opt/scripts"
+mkdir -p "$SCRIPTS_DIR"
+cp "$APP_DIR"/scripts/test_remote_connections.sh "$SCRIPTS_DIR/"
+cp "$APP_DIR"/scripts/lxc_smb_mount.sh "$SCRIPTS_DIR/"
+chmod +x "$SCRIPTS_DIR"/*.sh
+
 log "Розгортання Document Scanner Service завершено."
-log "Рекомендується запустити /opt/scripts/test_remote_connections.sh для перевірки з'єднань."
+log "Рекомендується запустити $SCRIPTS_DIR/test_remote_connections.sh для перевірки з'єднань."
 log "Для перегляду логів сервісу: journalctl -u $SERVICE_NAME -f"
 
 exit 0
