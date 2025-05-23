@@ -163,23 +163,148 @@ log "Встановлення build-essential та python3 (для деяких 
 apt-get install -y build-essential python3 || error_exit "Не вдалося встановити build-essential та python3."
 
 log "Встановлення mssql-tools для взаємодії з MS SQL Server..."
-# Додавання репозиторію Microsoft (сучасний метод)
-curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-keyring.gpg
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-keyring.gpg] https://packages.microsoft.com/ubuntu/$(lsb_release -rs)/prod focal main" > /etc/apt/sources.list.d/mssql-release.list
-apt-get update -y
-# Встановлення пакетів з прийняттям ліцензії
-ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev || error_exit "Не вдалося встановити mssql-tools."
-
-# Додаємо шлях до PATH як для поточної сесії, так і для майбутніх сесій
-echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> /etc/profile.d/mssql-tools.sh
-chmod +x /etc/profile.d/mssql-tools.sh
-export PATH="$PATH:/opt/mssql-tools/bin"
-
-# Перевірка встановлення
+# Перевірка, чи вже встановлено mssql-tools
 if command -v sqlcmd &> /dev/null; then
-    log "mssql-tools успішно встановлено. sqlcmd доступний."
+    log "mssql-tools вже встановлено. Пропускаємо цей крок."
+    # Переконаємося, що PATH правильно налаштовано
+    export PATH="$PATH:/opt/mssql-tools/bin"
+    echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> /etc/profile.d/mssql-tools.sh
+    chmod +x /etc/profile.d/mssql-tools.sh
+    log "PATH для mssql-tools налаштовано."
 else
-    error_exit "mssql-tools встановлено, але команда sqlcmd недоступна. Перевірте шлях: /opt/mssql-tools/bin"
+    # Додавання репозиторію Microsoft (сучасний метод)
+    # Перевірка наявності gpg
+    if command -v gpg &> /dev/null; then
+        log "Використовуємо gpg для додавання ключа репозиторію"
+        curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-keyring.gpg
+        # Визначення версії Ubuntu
+        UBUNTU_VERSION=$(lsb_release -rs)
+        log "Версія Ubuntu: $UBUNTU_VERSION"
+        # Чітко задаємо шлях репозиторію без додаткових слешів
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-keyring.gpg] https://packages.microsoft.com/ubuntu/$UBUNTU_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+    else
+        # Якщо gpg не встановлено, використовуємо застарілий метод з apt-key
+        log "gpg не знайдено, використовуємо альтернативний метод з apt-key"
+        apt-get install -y gnupg || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити gnupg. Продовжуємо..."
+        curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+        UBUNTU_VERSION=$(lsb_release -rs)
+        log "Версія Ubuntu: $UBUNTU_VERSION"
+        echo "deb https://packages.microsoft.com/ubuntu/$UBUNTU_VERSION/prod/ main" > /etc/apt/sources.list.d/mssql-release.list
+    fi
+    apt-get update -y || log "ПОПЕРЕДЖЕННЯ: Виникла помилка при оновленні пакетів. Продовжуємо..."
+    # Додаткова перевірка файлу репозиторію
+    log "Вміст файлу репозиторію:"
+    cat /etc/apt/sources.list.d/mssql-release.list
+    # Встановлення пакетів з прийняттям ліцензії
+    ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev || error_exit "Не вдалося встановити mssql-tools."
+
+    # Додаємо шлях до PATH як для поточної сесії, так і для майбутніх сесій
+    echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> /etc/profile.d/mssql-tools.sh
+    chmod +x /etc/profile.d/mssql-tools.sh
+    export PATH="$PATH:/opt/mssql-tools/bin"
+
+    # Перевірка встановлення
+    if command -v sqlcmd &> /dev/null; then
+        log "mssql-tools успішно встановлено. sqlcmd доступний."
+    else
+        log "Стандартний метод встановлення mssql-tools не спрацював. Спробуємо альтернативний метод..."
+    
+        # Альтернативний метод для Ubuntu 20.04 (focal)
+        log "Спроба встановлення для Ubuntu 20.04 (focal)"
+        curl -fsSL https://packages.microsoft.com/config/ubuntu/20.04/prod.list > /etc/apt/sources.list.d/mssql-release.list
+        curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+        apt-get update -y
+        ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev
+        
+        # Якщо і це не допомогло, спробуємо встановити для Ubuntu 22.04 (jammy)
+        if ! command -v sqlcmd &> /dev/null; then
+            log "Спроба встановлення для Ubuntu 22.04 (jammy)"
+            curl -fsSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list > /etc/apt/sources.list.d/mssql-release.list
+            apt-get update -y
+            ACCEPT_EULA=Y apt-get install -y mssql-tools unixodbc-dev
+        fi
+    
+    # Додаємо шлях до PATH ще раз
+    echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> /etc/profile.d/mssql-tools.sh
+    chmod +x /etc/profile.d/mssql-tools.sh
+    export PATH="$PATH:/opt/mssql-tools/bin"
+    
+    # Повторна перевірка
+    if command -v sqlcmd &> /dev/null; then
+        log "mssql-tools успішно встановлено за допомогою альтернативного методу."
+    else
+        log "Спроба прямого завантаження та встановлення пакету mssql-tools як останній варіант..."
+        
+        # Встановлюємо необхідні залежності
+        apt-get install -y curl unixodbc-dev wget
+        
+        # Створюємо тимчасову директорію для завантаження
+        TMP_DIR=$(mktemp -d)
+        cd "$TMP_DIR" || error_exit "Не вдалося перейти в тимчасову директорію"
+        
+        # Спроба завантаження та встановлення пакетів вручну (для Ubuntu 20.04/22.04)
+        log "Завантаження пакетів mssql-tools для ручного встановлення..."
+        
+        # Створюємо масив з версіями пакетів
+        declare -a VERSIONS=("17.10.1.1-1" "17.9.1.1-1" "17.8.1.1-1")
+        
+        SUCCESS=false
+        
+        for VER in "${VERSIONS[@]}"; do
+            log "Спроба завантаження mssql-tools версії $VER..."
+            if wget -q --spider https://packages.microsoft.com/ubuntu/22.04/prod/pool/main/m/mssql-tools/mssql-tools_${VER}_amd64.deb && \
+               wget -q --spider https://packages.microsoft.com/ubuntu/22.04/prod/pool/main/m/msodbcsql17/msodbcsql17_${VER}_amd64.deb; then
+                
+                log "Знайдено доступні пакети версії $VER. Завантаження..."
+                wget -q https://packages.microsoft.com/ubuntu/22.04/prod/pool/main/m/mssql-tools/mssql-tools_${VER}_amd64.deb
+                wget -q https://packages.microsoft.com/ubuntu/22.04/prod/pool/main/m/msodbcsql17/msodbcsql17_${VER}_amd64.deb
+                
+                # Встановлення пакетів
+                log "Встановлення пакетів версії $VER..."
+                ACCEPT_EULA=Y dpkg -i msodbcsql17_${VER}_amd64.deb || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити msodbcsql17 версії $VER"
+                ACCEPT_EULA=Y dpkg -i mssql-tools_${VER}_amd64.deb || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити mssql-tools версії $VER"
+                
+                if command -v sqlcmd &> /dev/null; then
+                    log "mssql-tools версії $VER успішно встановлено!"
+                    SUCCESS=true
+                    break
+                fi
+            fi
+        done
+        
+        if [ "$SUCCESS" = false ]; then
+            log "Жодна з версій не була успішно встановлена. Спроба з Ubuntu 20.04..."
+            # Спроба з Ubuntu 20.04
+            wget -q https://packages.microsoft.com/ubuntu/20.04/prod/pool/main/m/mssql-tools/mssql-tools_17.10.1.1-1_amd64.deb || true
+            wget -q https://packages.microsoft.com/ubuntu/20.04/prod/pool/main/m/msodbcsql17/msodbcsql17_17.10.1.1-1_amd64.deb || true
+            
+            # Встановлення пакетів
+            ACCEPT_EULA=Y dpkg -i msodbcsql17_17.10.1.1-1_amd64.deb || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити msodbcsql17"
+            ACCEPT_EULA=Y dpkg -i mssql-tools_17.10.1.1-1_amd64.deb || log "ПОПЕРЕДЖЕННЯ: Не вдалося встановити mssql-tools"
+        fi
+        
+        # Встановлення відсутніх залежностей, якщо такі є
+        apt-get install -f -y
+        
+        # Очищення тимчасової директорії
+        cd - || true
+        rm -rf "$TMP_DIR"
+        
+        # Додаємо шлях до PATH ще раз
+        echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> /etc/profile.d/mssql-tools.sh
+        chmod +x /etc/profile.d/mssql-tools.sh
+        export PATH="$PATH:/opt/mssql-tools/bin"
+        
+        # Остаточна перевірка
+        if command -v sqlcmd &> /dev/null; then
+            log "mssql-tools успішно встановлено за допомогою ручного завантаження та встановлення."
+        else
+            log "ВАЖЛИВО: Не вдалося встановити mssql-tools після всіх спроб."
+            log "Будемо продовжувати без mssql-tools, але деякі функції можуть не працювати."
+            log "Рекомендується встановити mssql-tools вручну після завершення розгортання."
+            # Не виходимо з помилкою, щоб дати шанс продовжити розгортання
+        fi
+    fi
 fi
 
 # 2. Клонування репозиторію або перевірка наявності коду додатку

@@ -216,6 +216,25 @@ test_openwebui() {
 
 # Головна функція
 main() {
+    # Перевірка наявності mssql-tools
+    if ! command -v sqlcmd &> /dev/null; then
+        log "⚠️ Команда sqlcmd (mssql-tools) не знайдена. Тестування MSSQL буде обмеженим."
+        log "Перевірте, чи встановлений пакет mssql-tools та чи додано /opt/mssql-tools/bin до PATH."
+        if [ -d "/opt/mssql-tools/bin" ]; then
+            export PATH="$PATH:/opt/mssql-tools/bin"
+            log "✅ Шлях /opt/mssql-tools/bin тимчасово додано до PATH для цього скрипта."
+            if command -v sqlcmd &> /dev/null; then
+                log "✅ Команда sqlcmd тепер доступна: $(which sqlcmd)"
+            else
+                log_error "❌ sqlcmd все ще недоступний, незважаючи на оновлення PATH."
+            fi
+        else
+            log_error "❌ Директорія /opt/mssql-tools/bin не існує. Можливо mssql-tools не встановлено."
+        fi
+    else
+        log "✅ mssql-tools (sqlcmd) встановлено та доступно: $(which sqlcmd)"
+    fi
+    
     # Тестування MSSQL
     if test_mssql; then
         log "✅ MSSQL тести пройдено успішно."
