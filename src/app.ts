@@ -6,6 +6,17 @@ import { OpenWebUIIntegration } from './services/OpenWebUIIntegration';
 import { ConfigManager } from './config/ConfigManager';
 import { Logger } from './utils/Logger';
 
+// Функція для форматування розміру файлу
+function formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 Bytes';
+    
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
 class DocumentScannerApp {
     private app: express.Application;
     private scanner: DocumentScanner;
@@ -110,6 +121,91 @@ class DocumentScannerApp {
                 return res.json(document);
             } catch (error: any) {
                 this.logger.error('Помилка при отриманні документа:', error);
+                return res.status(500).json({ error: error.message });
+            }
+        });
+        
+        this.app.get('/api/documents/:id/preview', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const document = await this.vectorDb.getDocumentById(id);
+                
+                if (!document) {
+                    return res.status(404).json({ error: 'Документ не знайдено' });
+                }
+                
+                // Створюємо простий HTML документ для попереднього перегляду
+                const htmlContent = `
+                <!DOCTYPE html>
+                <html lang="uk">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Перегляд документу: ${document.filename}</title>
+                    <style>
+                        body {
+                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                            margin: 0;
+                            padding: 20px;
+                            line-height: 1.6;
+                            color: #333;
+                            background-color: #f5f5f5;
+                        }
+                        .preview-container {
+                            max-width: 800px;
+                            margin: 0 auto;
+                            border: 1px solid #ddd;
+                            padding: 30px;
+                            border-radius: 8px;
+                            background-color: white;
+                            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+                        }
+                        .preview-header {
+                            padding-bottom: 15px;
+                            margin-bottom: 20px;
+                            border-bottom: 1px solid #eee;
+                        }
+                        .preview-header h1 {
+                            color: #2c3e50;
+                            margin-top: 0;
+                            font-size: 24px;
+                        }
+                        .preview-content {
+                            white-space: pre-wrap;
+                            overflow-wrap: break-word;
+                            background-color: #f9f9f9;
+                            padding: 15px;
+                            border-radius: 5px;
+                            border: 1px solid #e0e0e0;
+                            font-family: monospace;
+                        }
+                        .meta-info {
+                            margin-bottom: 5px;
+                            color: #666;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="preview-container">
+                        <div class="preview-header">
+                            <h1>${document.filename}</h1>
+                            <p class="meta-info"><strong>Тип:</strong> ${document.type}</p>
+                            <p class="meta-info"><strong>Розмір:</strong> ${formatFileSize(document.size)}</p>
+                            <p class="meta-info"><strong>Дата модифікації:</strong> ${new Date(document.modifiedTime).toLocaleString()}</p>
+                        </div>
+                        <div class="preview-content">
+                            ${document.content || 'Вміст документу недоступний'}
+                        </div>
+                    </div>
+                </body>
+                </html>
+                `;
+                
+                res.setHeader('Content-Type', 'text/html');
+                return res.send(htmlContent);
+                
+            } catch (error: any) {
+                this.logger.error('Помилка при отриманні документа для перегляду:', error);
                 return res.status(500).json({ error: error.message });
             }
         });

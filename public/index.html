@@ -3,46 +3,158 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document Scanner Dashboard</title>
+    <title>Document Scanner Chat</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-    <div class="container">
-        <header>
-            <h1>Document Scanner Dashboard</h1>
-        </header>
-        
-        <div class="status-card">
-            <h2>Статус системи</h2>
-            <div id="status">Завантаження...</div>
-            <div class="button-group">
-                <button id="scanButton" onclick="manualScan()">Ручне сканування</button>
-                <button onclick="refreshStatus()">Оновити статус</button>
+<body>    <div class="chat-container">
+        <!-- Боковий бургер-бар -->
+        <div class="sidebar hidden" id="sidebar">
+            <div class="sidebar-header">
+                <h2>Document Scanner</h2>
+                <button class="close-sidebar" onclick="toggleSidebar()"><i class="fas fa-times"></i></button>
+            </div>
+            <button onclick="newChat()" class="new-chat-btn"><i class="fas fa-plus"></i> Новий чат</button>
+            
+            <div class="sidebar-section">
+                <h3>Статус системи</h3>
+                <div id="sidebar-status">Завантаження...</div>
+                <div class="button-group">
+                    <button id="sidebarScanButton" onclick="manualScan()"><i class="fas fa-sync-alt"></i> Ручне сканування</button>
+                    <button onclick="refreshStatus(true)"><i class="fas fa-redo"></i> Оновити статус</button>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>Документи</h3>
+                <div class="filter-container">
+                    <select id="docTypeFilter">
+                        <option value="">Всі типи</option>
+                        <option value="pdf">PDF</option>
+                        <option value="doc">DOC/DOCX</option>
+                        <option value="txt">TXT</option>
+                    </select>
+                    <button onclick="loadDocuments(1, true)"><i class="fas fa-filter"></i> Фільтрувати</button>
+                </div>
+                <div id="sidebar-documentsList" class="sidebar-documents"></div>
+                <div id="sidebar-pagination" class="pagination"></div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <button onclick="showHelpModal()" class="help-button"><i class="fas fa-question-circle"></i> Допомога</button>
             </div>
         </div>
 
-        <div class="search-section">
-            <h2>Пошук документів</h2>
-            <div class="search-container">
-                <input type="text" id="searchQuery" class="search-box" placeholder="Введіть пошуковий запит...">
-                <button onclick="searchDocuments()">Пошук</button>
+        <!-- Головний вміст чату -->
+        <div class="main-content">
+            <header class="chat-header">
+                <button class="menu-button" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+                <h1>Document Scanner Chat</h1>
+            </header>
+            
+            <!-- Інформаційний банер -->
+            <div class="info-banner">
+                <p><strong>Нова функція:</strong> Чат-інтерфейс для роботи з документами! Спробуйте задати питання по вашим документам.</p>
+                <button onclick="dismissInfoBanner()" class="dismiss-button">×</button>
             </div>
-            <div id="searchResults" class="document-list"></div>
+              <!-- Область чату -->
+            <div class="chat-area" id="chat-area">
+                <div class="welcome-message">
+                    <h2>Вітаємо в Document Scanner Chat!</h2>
+                    <p>Задайте питання по вашим документам, щоб отримати відповіді на основі їх змісту. Система проаналізує всі документи та знайде відповідну інформацію.</p>
+                    <div class="examples">
+                        <p>Спробуйте ці запитання:</p>
+                        <div class="example-chips">
+                            <button onclick="setExampleQuery('Які основні теми в моїх документах?')" class="example-chip">Які основні теми в моїх документах?</button>
+                            <button onclick="setExampleQuery('Знайди інформацію про податкову звітність')" class="example-chip">Знайди інформацію про податкову звітність</button>
+                            <button onclick="setExampleQuery('Узагальни вміст останнього документу')" class="example-chip">Узагальни вміст останнього документу</button>
+                            <button onclick="setExampleQuery('Які документи були додані за останній місяць?')" class="example-chip">Які документи були додані за останній місяць?</button>
+                        </div>
+                    </div>
+                    <p style="margin-top: 30px; font-size: 14px; color: #777;">Використовуйте меню <i class="fas fa-bars"></i> ліворуч для доступу до всіх функцій: перегляду документів, сканування, фільтрації та інших налаштувань.</p>
+                </div>
+                
+                <!-- Сюди будуть додаватись повідомлення чату -->
+                <div id="chat-messages"></div>
+            </div>
+            
+            <!-- Форма введення повідомлення -->
+            <div class="chat-input-container">
+                <form id="chat-form" onsubmit="sendMessage(event)">
+                    <div class="input-wrapper">
+                        <textarea id="message-input" placeholder="Введіть ваше повідомлення..." rows="1" onInput="autoResize(this)"></textarea>
+                        <button type="submit"><i class="fas fa-paper-plane"></i></button>
+                    </div>
+                </form>
+            </div>
         </div>
-        
-        <div class="documents-section">
-            <h2>Всі документи</h2>
-            <div class="filter-container">
-                <select id="docTypeFilter">
-                    <option value="">Всі типи</option>
-                    <option value="pdf">PDF</option>
-                    <option value="doc">DOC/DOCX</option>
-                    <option value="txt">TXT</option>
-                </select>
-                <button onclick="loadDocuments()">Фільтрувати</button>
+    </div>
+    </div>
+
+    <!-- Модальне вікно допомоги -->
+    <div id="helpModal" class="modal" style="display: none;">
+        <div class="modal-content help-content">
+            <h2>Довідка по роботі з Document Scanner</h2>
+              <div class="help-section">
+                <h3>Використання чат-інтерфейсу</h3>
+                <p>Нова функція дозволяє взаємодіяти з документами через чат:</p>
+                <ul>
+                    <li>Просто введіть своє запитання в поле внизу екрану</li>
+                    <li>Система знайде відповідні документи і надасть відповідь з посиланнями на джерела</li>
+                    <li>Ви можете задавати питання щодо конкретного документу, вказавши його назву</li>
+                    <li>Для нового діалогу натисніть кнопку "Новий чат" в боковому меню</li>
+                </ul>
+                <p>Приклади запитів:</p>
+                <ul>
+                    <li>"Знайди всі документи про податкову звітність"</li>
+                    <li>"Які основні вимоги в останньому нормативному документі?"</li>
+                    <li>"Узагальни вміст документу [назва документу]"</li>
+                </ul>
             </div>
-            <div id="documentsList" class="document-list"></div>
-            <div id="pagination" class="pagination"></div>
+            
+            <div class="help-section">
+                <h3>Попередній перегляд документів</h3>
+                <p>Нова функція «Попередній перегляд» дозволяє відкрити документ у новому вікні для більш зручного читання:</p>
+                <ul>
+                    <li>Натисніть кнопку <strong style="color: #e67e22;">Попередній перегляд</strong> біля документа</li>
+                    <li>Документ відкриється у новому вікні у форматованому вигляді</li>
+                    <li>Ви можете налаштувати розмір вікна перегляду та прокручувати вміст</li>
+                    <li>Якщо вікно не відкривається, перевірте, чи не блокуються спливаючі вікна у вашому браузері</li>
+                </ul>
+            </div>
+            
+            <div class="help-section">
+                <h3>Пошук документів</h3>
+                <p>Для пошуку по вмісту документів:</p>
+                <ul>
+                    <li>Введіть пошуковий запит у полі пошуку</li>
+                    <li>Натисніть кнопку «Пошук»</li>
+                    <li>У результатах будуть підсвічені фрагменти тексту, що містять ваш запит</li>
+                </ul>
+            </div>
+            
+            <div class="help-section">
+                <h3>Керування документами</h3>
+                <ul>
+                    <li><strong>Перегляд</strong> - відкриває документ у модальному вікні</li>
+                    <li><strong>Попередній перегляд</strong> - відкриває документ у новому вікні браузера</li>
+                    <li><strong>Видалення</strong> - видаляє документ з системи (дія незворотня)</li>
+                </ul>
+            </div>
+            
+            <div class="help-section">
+                <h3>Ручне сканування</h3>
+                <p>Якщо ви додали нові документи у теку SMB, ви можете запустити сканування вручну:</p>
+                <ul>
+                    <li>Натисніть кнопку «Ручне сканування» у розділі «Статус системи»</li>
+                    <li>Дочекайтеся завершення сканування</li>
+                    <li>Нові документи з'являться у списку після оновлення</li>
+                </ul>
+            </div>
+            
+            <div style="text-align: right; margin-top: 20px;">
+                <button onclick="closeHelpModal()" style="background-color: #7f8c8d;"><i class="fas fa-times"></i> Закрити</button>
+            </div>
         </div>
     </div>
 
